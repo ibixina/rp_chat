@@ -1,0 +1,17 @@
+{
+  "name": "persona-chat-app",
+  "version": "1.0.0",
+  "description": "WhatsApp/Signal style persona chat app powered by DeepInfra Hermes-3 70B",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "multer": "^1.4.5-lts.1",
+    "openai": "^4.55.0"
+  }
+}
