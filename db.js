@@ -63,7 +63,20 @@ function writeDB(data) {
 module.exports = {
   getPersonas() {
     const db = readDB();
-    return db.personas || [];
+    const personas = db.personas || [];
+    return personas.map(p => {
+      const msgs = db.messages[p.id] || [];
+      const lastMsg = msgs[msgs.length - 1];
+      const rawTs = lastMsg && lastMsg.timestamp ? new Date(lastMsg.timestamp).getTime() : (p.createdAt ? new Date(p.createdAt).getTime() : 0);
+      const lastTimestamp = isNaN(rawTs) ? 0 : rawTs;
+      const timeStr = lastMsg && lastMsg.timestamp && !isNaN(rawTs) ? new Date(lastMsg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+      return {
+        ...p,
+        lastTimestamp,
+        lastMessageText: lastMsg ? lastMsg.text : (p.firstMessage || p.description),
+        lastMessageTime: timeStr
+      };
+    }).sort((a, b) => (b.lastTimestamp || 0) - (a.lastTimestamp || 0));
   },
 
   getPersona(id) {

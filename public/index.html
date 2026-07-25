@@ -23,6 +23,9 @@
           <i class="fa-solid fa-circle-user"></i>
         </div>
         <div class="header-actions">
+          <button id="btn-toggle-sidebar" title="Fold Side Panel" class="icon-btn">
+            <i class="fa-solid fa-bars-staggered"></i>
+          </button>
           <button id="btn-add-persona" title="New Contact" class="icon-btn">
             <i class="fa-solid fa-user-plus"></i>
           </button>
@@ -48,6 +51,9 @@
       
       <!-- EMPTY STATE (No chat selected) -->
       <div class="empty-state" id="empty-state">
+        <button id="btn-expand-sidebar-empty" title="Expand Side Panel" class="icon-btn toggle-sidebar-btn empty-sidebar-toggle">
+          <i class="fa-solid fa-bars"></i> Contacts
+        </button>
         <div class="empty-icon">
           <i class="fa-regular fa-comments"></i>
         </div>
@@ -61,6 +67,9 @@
         <!-- Chat Header -->
         <header class="chat-header">
           <div class="chat-header-info">
+            <button id="btn-expand-sidebar" title="Expand Side Panel" class="icon-btn toggle-sidebar-btn">
+              <i class="fa-solid fa-bars"></i>
+            </button>
             <div class="avatar-wrapper">
               <img src="/uploads/default-avatar.svg" alt="Avatar" class="header-avatar" id="current-avatar">
               <span class="online-badge" title="Online"></span>

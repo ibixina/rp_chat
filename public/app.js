@@ -20,10 +20,46 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnSend = document.getElementById('btn-send');
   
   // Header Action Buttons
+  const appContainerEl = document.querySelector('.app-container');
+  const btnToggleSidebar = document.getElementById('btn-toggle-sidebar');
+  const btnExpandSidebar = document.getElementById('btn-expand-sidebar');
+  const btnExpandSidebarEmpty = document.getElementById('btn-expand-sidebar-empty');
+
   const btnAddPersona = document.getElementById('btn-add-persona');
   const btnEditPersona = document.getElementById('btn-edit-persona');
   const btnViewMemory = document.getElementById('btn-view-memory');
   const btnClearChat = document.getElementById('btn-clear-chat');
+
+  // Sidebar Fold / Collapse Toggle
+  function setSidebarCollapsed(collapsed) {
+    if (collapsed) {
+      appContainerEl.classList.add('sidebar-collapsed');
+      localStorage.setItem('sidebar_collapsed', 'true');
+    } else {
+      appContainerEl.classList.remove('sidebar-collapsed');
+      localStorage.setItem('sidebar_collapsed', 'false');
+    }
+  }
+
+  function toggleSidebar() {
+    const isCollapsed = appContainerEl.classList.contains('sidebar-collapsed');
+    setSidebarCollapsed(!isCollapsed);
+  }
+
+  if (btnToggleSidebar) btnToggleSidebar.addEventListener('click', toggleSidebar);
+  if (btnExpandSidebar) btnExpandSidebar.addEventListener('click', toggleSidebar);
+  if (btnExpandSidebarEmpty) btnExpandSidebarEmpty.addEventListener('click', toggleSidebar);
+
+  if (localStorage.getItem('sidebar_collapsed') === 'true') {
+    setSidebarCollapsed(true);
+  }
+
+  document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === '[') {
+      e.preventDefault();
+      toggleSidebar();
+    }
+  });
 
   // Modals
   const personaModal = document.getElementById('persona-modal');
@@ -150,10 +186,60 @@ document.addEventListener('DOMContentLoaded', () => {
       const data = await res.json();
       if (data.success) {
         personas = data.personas;
+
+        // Fetch last messages for each persona in parallel to guarantee up-to-date previews & timestamps on page load
+        await Promise.all(personas.map(async (p) => {
+          try {
+            const chatRes = await fetch(`/api/chats/${p.id}`);
+            const chatData = await chatRes.json();
+            if (chatData.success && chatData.messages && chatData.messages.length > 0) {
+              const lastMsg = chatData.messages[chatData.messages.length - 1];
+              const ts = new Date(lastMsg.timestamp).getTime();
+              p.lastTimestamp = isNaN(ts) ? (p.createdAt ? new Date(p.createdAt).getTime() : 0) : ts;
+              p.lastMessageTime = !isNaN(ts) ? new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'online';
+              p.lastMessageText = lastMsg.text;
+            } else {
+              p.lastTimestamp = p.createdAt ? new Date(p.createdAt).getTime() : 0;
+              p.lastMessageText = p.firstMessage || p.description;
+              p.lastMessageTime = 'online';
+            }
+          } catch (e) {}
+        }));
+
+        personas.sort((a, b) => (b.lastTimestamp || 0) - (a.lastTimestamp || 0));
         renderContactList(personas);
       }
     } catch (err) {
       console.error('Load personas error:', err);
+    }
+  }
+
+  function formatSnippetPreview(text, maxLength = 55) {
+    if (!text) return '';
+    let clean = text
+      .replace(/\*{1,2}([^*]+?)\*{1,2}/g, '$1')
+      .replace(/\*/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (clean.length > maxLength) {
+      return clean.slice(0, maxLength) + '…';
+    }
+    return clean;
+  }
+
+  function updatePersonaLastMessaged(personaId, text, timestamp = null) {
+    const p = personas.find(item => item.id === personaId);
+    if (p) {
+      const ts = timestamp ? new Date(timestamp).getTime() : Date.now();
+      p.lastTimestamp = isNaN(ts) ? Date.now() : ts;
+      p.lastMessageTime = new Date(p.lastTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      p.lastMessageText = text;
+      personas.sort((a, b) => {
+        const aT = (a.lastTimestamp && !isNaN(a.lastTimestamp)) ? a.lastTimestamp : (a.createdAt ? new Date(a.createdAt).getTime() : 0);
+        const bT = (b.lastTimestamp && !isNaN(b.lastTimestamp)) ? b.lastTimestamp : (b.createdAt ? new Date(b.createdAt).getTime() : 0);
+        return (bT || 0) - (aT || 0);
+      });
+      renderContactList(personas);
     }
   }
 
@@ -169,6 +255,10 @@ document.addEventListener('DOMContentLoaded', () => {
       item.className = `contact-item ${p.id === activePersonaId ? 'active' : ''}`;
       item.dataset.id = p.id;
       
+      const rawSnippet = p.lastMessageText || p.firstMessage || p.description || '';
+      const snippet = formatSnippetPreview(rawSnippet);
+      const timeDisplay = p.lastMessageTime || 'online';
+
       item.innerHTML = `
         <div class="avatar-wrapper">
           <img src="${p.avatarUrl || '/uploads/default-avatar.svg'}" alt="${p.name}" class="contact-avatar" onerror="this.src='/uploads/default-avatar.svg'">
@@ -177,9 +267,9 @@ document.addEventListener('DOMContentLoaded', () => {
         <div class="contact-details">
           <div class="contact-top-row">
             <span class="contact-name">${escapeHtml(p.name)}</span>
-            <span class="contact-time">online</span>
+            <span class="contact-time">${escapeHtml(timeDisplay)}</span>
           </div>
-          <div class="contact-snippet">${escapeHtml(p.description)}</div>
+          <div class="contact-snippet" title="${escapeHtml(rawSnippet)}">${escapeHtml(snippet)}</div>
         </div>
       `;
 
@@ -221,6 +311,10 @@ document.addEventListener('DOMContentLoaded', () => {
       const data = await res.json();
       if (data.success) {
         renderMessages(data.messages);
+        if (data.messages && data.messages.length > 0) {
+          const lastMsg = data.messages[data.messages.length - 1];
+          updatePersonaLastMessaged(personaId, lastMsg.text, lastMsg.timestamp);
+        }
       }
     } catch (err) {
       console.error('Fetch messages error:', err);
@@ -264,7 +358,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function splitResponseIntoMessages(fullText) {
     const text = fullText.trim();
-    if (!text || text.length <= 220) {
+    const MAX_CHUNK_LENGTH = 600;
+
+    if (!text || text.length <= MAX_CHUNK_LENGTH) {
       return [text];
     }
 
@@ -272,16 +368,27 @@ document.addEventListener('DOMContentLoaded', () => {
     const chunks = [];
 
     for (const para of paragraphs) {
-      if (para.length <= 250) {
-        chunks.push(para);
+      if (para.length <= MAX_CHUNK_LENGTH) {
+        if (chunks.length > 0 && (chunks[chunks.length - 1].length + para.length + 1) <= MAX_CHUNK_LENGTH) {
+          chunks[chunks.length - 1] += '\n\n' + para;
+        } else {
+          chunks.push(para);
+        }
       } else {
         const sentences = para.match(/[^.!?]+[.!?]+(\s+|$)/g) || [para];
         let currentChunk = '';
 
         for (const sentence of sentences) {
-          if ((currentChunk + sentence).length > 250 && currentChunk.length > 0) {
-            chunks.push(currentChunk.trim());
-            currentChunk = sentence;
+          if ((currentChunk + sentence).length > MAX_CHUNK_LENGTH && currentChunk.length > 0) {
+            const astCount = (currentChunk.match(/\*/g) || []).length;
+            if (astCount % 2 !== 0) {
+              currentChunk += '*';
+              chunks.push(currentChunk.trim());
+              currentChunk = '*' + sentence;
+            } else {
+              chunks.push(currentChunk.trim());
+              currentChunk = sentence;
+            }
           } else {
             currentChunk += sentence;
           }
@@ -541,6 +648,7 @@ document.addEventListener('DOMContentLoaded', () => {
       currentStatusEl.textContent = 'online';
       currentStatusEl.className = 'status-subtitle';
       scrollToBottom();
+      loadPersonas();
     }
   }
 
@@ -646,6 +754,7 @@ document.addEventListener('DOMContentLoaded', () => {
     };
     const userBubble = appendMessageBubble(userMsg);
     scrollToBottom();
+    updatePersonaLastMessaged(activePersonaId, text);
 
     // 2. Realistic 950ms delay while single checkmark (Sent) remains visible
     await new Promise(r => setTimeout(r, 950));
@@ -701,6 +810,7 @@ document.addEventListener('DOMContentLoaded', () => {
       // 5. Full Response Arrived -> Render persona message chunks
       if (fullResponseText.trim()) {
         await renderPersonaChunks(fullResponseText.trim());
+        updatePersonaLastMessaged(activePersonaId, fullResponseText.trim());
       }
     } catch (err) {
       console.error('Stream request error:', err);
@@ -718,6 +828,7 @@ document.addEventListener('DOMContentLoaded', () => {
       currentStatusEl.textContent = 'online';
       currentStatusEl.className = 'status-subtitle';
       scrollToBottom();
+      loadPersonas();
     }
   }
 
@@ -794,7 +905,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function formatMessageText(str) {
     if (!str) return '';
-    const escaped = escapeHtml(str);
-    return escaped.replace(/\*{1,2}([^*]+?)\*{1,2}/g, '<span class="message-action">$1</span>');
+    let escaped = escapeHtml(str);
+
+    // 1. Clean orphan asterisks like "* " or " *"
+    escaped = escaped.replace(/(^|\s)\*{1,2}(\s|$)/g, '$1$2');
+
+    // 2. Format paired asterisks: *action* or **action**
+    escaped = escaped.replace(/\*{1,2}([^*]+?)\*{1,2}/g, '<span class="message-action">$1</span>');
+
+    // 3. Format unclosed asterisks: *action until end of text/chunk
+    escaped = escaped.replace(/(^|\s)\*{1,2}([^*<]+)$/g, '$1<span class="message-action">$2</span>');
+
+    return escaped;
   }
 });

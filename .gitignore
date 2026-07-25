@@ -8,3 +8,7 @@ node_modules/
 data/db.json
 public/uploads/*
 !public/uploads/.gitkeep
+
+# Perchance Data Exports
+perchance-characters-export-*.json
+perchance-*.json

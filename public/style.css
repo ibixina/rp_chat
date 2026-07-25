@@ -51,6 +51,44 @@ body, html {
   border-right: 1px solid var(--border-color);
   display: flex;
   flex-direction: column;
+  transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1), min-width 0.25s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.2s ease;
+  will-change: width, min-width;
+}
+
+.app-container.sidebar-collapsed .sidebar {
+  width: 0 !important;
+  min-width: 0 !important;
+  overflow: hidden;
+  opacity: 0;
+  border-right: none;
+  pointer-events: none;
+}
+
+.toggle-sidebar-btn {
+  margin-right: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.app-container:not(.sidebar-collapsed) #btn-expand-sidebar {
+  display: none;
+}
+
+.empty-sidebar-toggle {
+  position: absolute;
+  top: 15px;
+  left: 15px;
+  border-radius: 20px;
+  padding: 6px 14px;
+  background: var(--bg-header);
+  font-size: 13px;
+  color: var(--text-main);
+  gap: 8px;
+}
+
+.app-container:not(.sidebar-collapsed) .empty-sidebar-toggle {
+  display: none !important;
 }
 
 .sidebar-header {
@@ -791,6 +829,8 @@ body, html {
   user-select: text;
   transition: background 0.15s ease;
   border-radius: 4px;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .message-text:hover {

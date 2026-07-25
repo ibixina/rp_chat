@@ -6,6 +6,7 @@ const fs = require('fs');
 const multer = require('multer');
 const OpenAI = require('openai');
 const db = require('./db');
+const { importPerchanceExport } = require('./import-perchance');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -45,6 +46,18 @@ app.use(express.static(path.join(__dirname, 'public')));
 // -------------------------------------------------------------
 // REST API Routes
 // -------------------------------------------------------------
+
+// Import Perchance Export JSON file
+app.post('/api/import-perchance', (req, res) => {
+  try {
+    const { filePath } = req.body;
+    const targetPath = filePath || './perchance-characters-export-2026-07-25.json';
+    const result = importPerchanceExport(targetPath);
+    res.json({ success: true, imported: result });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 
 // Get all personas
 app.get('/api/personas', (req, res) => {
@@ -172,9 +185,10 @@ Description: ${persona.description}
 [PERSISTENT MEMORY & STORY STATE]
 ${persona.storyMemory || 'No prior narrative memory recorded.'}
 
-[ROLEPLAY DIRECTIVES]
+[ROLEPLAY & STORY PROGRESSION DIRECTIVES]
 - React naturally, dynamically, and directly to the recent message history and the user's input.
-- Strictly adhere to the established mood, tone, and dialogue trajectory from the latest chat messages.
+- Strictly adhere to the current scene, location, emotional vibe, and established dynamic.
+- Pay close attention to any pending story hooks, promises, or unresolved plans mentioned in history and follow up naturally when appropriate.
 - Speak in human conversational dialogue suitable for a messaging chat.`;
 
   const recentMessages = allMessages.slice(-30).map(msg => ({
@@ -262,9 +276,10 @@ Description: ${persona.description}
 [PERSISTENT MEMORY & STORY STATE]
 ${persona.storyMemory || 'No prior narrative memory recorded.'}
 
-[ROLEPLAY DIRECTIVES]
+[ROLEPLAY & STORY PROGRESSION DIRECTIVES]
 - React naturally, dynamically, and directly to the recent message history and the user's input.
-- Strictly adhere to the established mood, tone, and dialogue trajectory from the latest chat messages.
+- Strictly adhere to the current scene, location, emotional vibe, and established dynamic.
+- Pay close attention to any pending story hooks, promises, or unresolved plans mentioned in history and follow up naturally when appropriate.
 - Speak in human conversational dialogue suitable for a messaging chat.`;
 
   // 4. Build prompt messages using sliding window (last 30 turns)
@@ -334,15 +349,30 @@ async function triggerMemorySummarization(personaId) {
 
     if (!persona || !messages || messages.length < 4) return;
 
-    const formattedTranscript = messages.map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n');
+    // Send only the 12 latest messages (6 turns) since the previous memory update
+    const recentNewMessages = messages.slice(-12);
+    const formattedTranscript = recentNewMessages.map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n');
 
     const summaryPrompt = [
       {
         role: 'system',
-        content: `You are an expert story memory tracker. Your task is to update the persistent story memory log for a conversation between User and ${persona.name}.
-Extract key narrative developments, established facts, user secrets/preferences, emotional relationship changes, physical locations, and important story milestones.
+        content: `You are an expert story memory tracker. Your task is to update the persistent story memory log for a roleplay conversation between User and ${persona.name}.
 
-Format the memory as concise, clean bullet points. Maintain existing key facts while integrating new events.`
+Organize the output into these 4 clean, concise sections:
+
+### [CURRENT SCENE & LOCATION]
+- Physical setting, location, immediate physical state, and current atmosphere.
+
+### [RELATIONSHIP & EMOTIONAL DYNAMIC]
+- Established emotional tone, intimacy level, nicknames, and relationship dynamic.
+
+### [PENDING HOOKS & UNRESOLVED PLANS]
+- Pending promises, mysteries, unanswered questions, or future plans mentioned in dialogue.
+
+### [KEY NARRATIVE MILESTONES & ESTABLISHED FACTS]
+- Essential plot milestones, user preferences/secrets, and permanent story facts.
+
+Integrate the new events from the recent transcript into the existing memory log while keeping it clean and consolidated.`
       },
       {
         role: 'user',
@@ -352,7 +382,7 @@ ${persona.storyMemory || 'None'}
 [RECENT CONVERSATION TRANSCRIPT]
 ${formattedTranscript}
 
-Please produce the updated, consolidated Story Memory Log:`
+Please produce the updated, structured Story Memory Log:`
       }
     ];
 
