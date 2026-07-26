@@ -67,12 +67,7 @@ function importPerchanceExport(filePath) {
   };
 
     db.savePersona(personaData);
-
-    // Save formatted messages to DB
-    const currentDb = db.getPersonas() ? JSON.parse(fs.readFileSync(path.join(__dirname, 'data', 'db.json'), 'utf8')) : {};
-    if (!currentDb.messages) currentDb.messages = {};
-    currentDb.messages[personaId] = formattedMessages;
-    fs.writeFileSync(path.join(__dirname, 'data', 'db.json'), JSON.stringify(currentDb, null, 2), 'utf8');
+    db.setMessages(personaId, formattedMessages);
 
     importedPersonas.push({ persona: personaData, messageCount: formattedMessages.length });
     console.log(`Imported persona '${char.name}' (${personaId}) with ${formattedMessages.length} messages.`);

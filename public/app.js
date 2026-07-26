@@ -169,27 +169,11 @@ document.addEventListener('DOMContentLoaded', () => {
       const data = await res.json();
       if (data.success) {
         personas = data.personas;
-
-        // Fetch last messages for each persona in parallel to guarantee up-to-date previews & timestamps on page load
-        await Promise.all(personas.map(async (p) => {
-          try {
-            const chatRes = await fetch(`/api/chats/${p.id}`);
-            const chatData = await chatRes.json();
-            if (chatData.success && chatData.messages && chatData.messages.length > 0) {
-              const lastMsg = chatData.messages[chatData.messages.length - 1];
-              const ts = new Date(lastMsg.timestamp).getTime();
-              p.lastTimestamp = isNaN(ts) ? (p.createdAt ? new Date(p.createdAt).getTime() : 0) : ts;
-              p.lastMessageTime = !isNaN(ts) ? new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'online';
-              p.lastMessageText = lastMsg.text;
-            } else {
-              p.lastTimestamp = p.createdAt ? new Date(p.createdAt).getTime() : 0;
-              p.lastMessageText = p.firstMessage || p.description;
-              p.lastMessageTime = 'online';
-            }
-          } catch (e) {}
-        }));
-
-        personas.sort((a, b) => (b.lastTimestamp || 0) - (a.lastTimestamp || 0));
+        // Server already returns lastMessageText, lastMessageTime, lastTimestamp sorted by recency
+        personas.forEach(p => {
+          if (!p.lastMessageTime) p.lastMessageTime = 'online';
+          if (!p.lastMessageText) p.lastMessageText = p.firstMessage || p.description || '';
+        });
         renderContactList(personas);
       }
     } catch (err) {
@@ -1095,6 +1079,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const settingsModelCustom = document.getElementById('settings-model-custom');
   const settingsTemp = document.getElementById('settings-temp');
   const tempValDisplay = document.getElementById('temp-val-display');
+  const settingsContextBudget = document.getElementById('settings-context-budget');
+  const contextBudgetDisplay = document.getElementById('context-budget-display');
 
   let activeProvider = 'openrouter';
 
@@ -1115,6 +1101,12 @@ document.addEventListener('DOMContentLoaded', () => {
   if (settingsTemp && tempValDisplay) {
     settingsTemp.addEventListener('input', (e) => {
       tempValDisplay.textContent = parseFloat(e.target.value).toFixed(2);
+    });
+  }
+
+  if (settingsContextBudget && contextBudgetDisplay) {
+    settingsContextBudget.addEventListener('input', (e) => {
+      contextBudgetDisplay.textContent = parseInt(e.target.value, 10);
     });
   }
 
@@ -1168,6 +1160,10 @@ document.addEventListener('DOMContentLoaded', () => {
         const temp = s.temperature !== undefined ? s.temperature : 0.68;
         settingsTemp.value = temp;
         tempValDisplay.textContent = parseFloat(temp).toFixed(2);
+
+        const budget = s.contextBudget !== undefined ? s.contextBudget : 6000;
+        if (settingsContextBudget) settingsContextBudget.value = budget;
+        if (contextBudgetDisplay) contextBudgetDisplay.textContent = parseInt(budget, 10);
       }
     } catch (err) {
       console.error('Fetch settings error:', err);
@@ -1192,7 +1188,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const payload = {
       provider: activeProvider,
       model: chosenModel,
-      temperature: parseFloat(settingsTemp.value)
+      temperature: parseFloat(settingsTemp.value),
+      contextBudget: settingsContextBudget ? parseInt(settingsContextBudget.value, 10) : 6000
     };
 
     try {

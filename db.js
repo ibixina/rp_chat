@@ -38,27 +38,56 @@ const defaultData = {
   }
 };
 
+// In-memory cache — read from disk once, write-back asynchronously
+let cachedDB = null;
+let writeTimer = null;
+const WRITE_DEBOUNCE_MS = 500;
+
 function readDB() {
+  if (cachedDB) return cachedDB;
   try {
     if (!fs.existsSync(DB_FILE)) {
-      fs.writeFileSync(DB_FILE, JSON.stringify(defaultData, null, 2), 'utf8');
-      return defaultData;
+      cachedDB = JSON.parse(JSON.stringify(defaultData));
+      flushSync();
+      return cachedDB;
     }
     const raw = fs.readFileSync(DB_FILE, 'utf8');
-    return JSON.parse(raw);
+    cachedDB = JSON.parse(raw);
+    return cachedDB;
   } catch (err) {
     console.error('Error reading DB file, returning default:', err);
-    return defaultData;
+    cachedDB = JSON.parse(JSON.stringify(defaultData));
+    return cachedDB;
   }
 }
 
-function writeDB(data) {
+function scheduleDiskWrite() {
+  if (writeTimer) clearTimeout(writeTimer);
+  writeTimer = setTimeout(() => {
+    if (!cachedDB) return;
+    fs.writeFile(DB_FILE, JSON.stringify(cachedDB, null, 2), 'utf8', (err) => {
+      if (err) console.error('Error writing DB file:', err);
+    });
+  }, WRITE_DEBOUNCE_MS);
+}
+
+// Synchronous flush for startup/shutdown
+function flushSync() {
+  if (!cachedDB) return;
   try {
-    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf8');
+    fs.writeFileSync(DB_FILE, JSON.stringify(cachedDB, null, 2), 'utf8');
   } catch (err) {
     console.error('Error writing DB file:', err);
   }
 }
+
+// Flush to disk before process exits
+process.on('exit', flushSync);
+process.on('SIGINT', () => { flushSync(); process.exit(); });
+process.on('SIGTERM', () => { flushSync(); process.exit(); });
+
+// Initialize cache at module load
+readDB();
 
 module.exports = {
   getPersonas() {
@@ -106,7 +135,7 @@ module.exports = {
         }
       }
     }
-    writeDB(db);
+    scheduleDiskWrite();
     return persona;
   },
 
@@ -114,7 +143,7 @@ module.exports = {
     const db = readDB();
     db.personas = db.personas.filter(p => p.id !== id);
     delete db.messages[id];
-    writeDB(db);
+    scheduleDiskWrite();
   },
 
   getMessages(personaId) {
@@ -134,19 +163,15 @@ module.exports = {
       timestamp: message.timestamp || new Date().toISOString()
     };
     db.messages[personaId].push(newMsg);
-    writeDB(db);
+    scheduleDiskWrite();
     return newMsg;
   },
 
-  updateLastMessage(personaId, msgId, newText) {
+  // Bulk-set messages for a persona (used by import)
+  setMessages(personaId, messages) {
     const db = readDB();
-    if (db.messages[personaId]) {
-      const msg = db.messages[personaId].find(m => m.id === msgId);
-      if (msg) {
-        msg.text = newText;
-        writeDB(db);
-      }
-    }
+    db.messages[personaId] = messages;
+    scheduleDiskWrite();
   },
 
   clearMessages(personaId) {
@@ -162,7 +187,7 @@ module.exports = {
         timestamp: new Date().toISOString()
       });
     }
-    writeDB(db);
+    scheduleDiskWrite();
     return db.messages[personaId];
   },
 
@@ -173,7 +198,7 @@ module.exports = {
       if (msg) {
         if (updates.text !== undefined) msg.text = updates.text;
         if (updates.reactions !== undefined) msg.reactions = updates.reactions;
-        writeDB(db);
+        scheduleDiskWrite();
         return msg;
       }
     }
@@ -184,7 +209,7 @@ module.exports = {
     const db = readDB();
     if (db.messages[personaId]) {
       db.messages[personaId] = db.messages[personaId].filter(m => m.id !== msgId);
-      writeDB(db);
+      scheduleDiskWrite();
       return true;
     }
     return false;
@@ -204,7 +229,7 @@ module.exports = {
         // Keep target user message, remove subsequent persona responses
         db.messages[personaId] = msgs.slice(0, index + 1);
       }
-      writeDB(db);
+      scheduleDiskWrite();
     }
   },
 
@@ -213,7 +238,7 @@ module.exports = {
     const persona = db.personas.find(p => p.id === personaId);
     if (persona) {
       persona.storyMemory = memoryText;
-      writeDB(db);
+      scheduleDiskWrite();
     }
   },
 
@@ -222,7 +247,8 @@ module.exports = {
     return db.settings || {
       provider: 'openrouter',
       model: 'sao10k/l3.3-euryale-70b',
-      temperature: 0.68
+      temperature: 0.68,
+      contextBudget: 6000
     };
   },
 
@@ -231,9 +257,10 @@ module.exports = {
     db.settings = {
       provider: settings.provider || 'openrouter',
       model: settings.model || 'sao10k/l3.3-euryale-70b',
-      temperature: settings.temperature ? parseFloat(settings.temperature) : 0.68
+      temperature: settings.temperature ? parseFloat(settings.temperature) : 0.68,
+      contextBudget: settings.contextBudget ? parseInt(settings.contextBudget, 10) : 6000
     };
-    writeDB(db);
+    scheduleDiskWrite();
     return db.settings;
   }
 };
