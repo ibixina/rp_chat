@@ -486,13 +486,27 @@ body, html {
   background-color: var(--bg-sidebar);
   border: 1px solid var(--border-color);
   border-radius: 12px;
-  width: 520px;
-  max-width: 90vw;
-  max-height: 90vh;
+  width: 720px;
+  max-width: 92vw;
+  max-height: 92vh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+}
+
+#form-description {
+  min-height: 180px;
+  resize: vertical;
+  line-height: 1.5;
+  font-family: inherit;
+}
+
+#form-first-message {
+  min-height: 70px;
+  resize: vertical;
+  line-height: 1.4;
+  font-family: inherit;
 }
 
 .modal-header {
@@ -657,6 +671,28 @@ body, html {
   max-height: 300px;
   overflow-y: auto;
   font-family: monospace;
+}
+
+.memory-edit-textarea {
+  background-color: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 14px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--text-main);
+  white-space: pre-wrap;
+  min-height: 280px;
+  max-height: 420px;
+  resize: vertical;
+  font-family: inherit;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.memory-edit-textarea:focus {
+  border-color: var(--accent-green, #00a884);
+  outline: none;
 }
 
 /* Avatar Wrapper & Online Status Badge */
@@ -859,4 +895,57 @@ body, html {
 .message-bubble.user .message-action {
   color: #a8d8fc;
   font-style: italic;
+}
+
+/* User Avatar & Settings Modal Styles */
+.user-avatar-placeholder {
+  cursor: pointer;
+  transition: transform 0.15s ease, color 0.15s ease;
+}
+
+.user-avatar-placeholder:hover {
+  transform: scale(1.1);
+  color: var(--accent-green, #00a884);
+}
+
+.provider-options-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 4px;
+}
+
+.provider-card {
+  padding: 14px;
+  border-radius: 8px;
+  background-color: var(--bg-hover, #202c33);
+  border: 2px solid var(--border-color, #222d34);
+  cursor: pointer;
+  transition: border-color 0.2s ease, background-color 0.2s ease;
+  user-select: none;
+}
+
+.provider-card:hover {
+  border-color: var(--text-muted, #8696a0);
+}
+
+.provider-card.active {
+  border-color: var(--accent-green, #00a884);
+  background-color: rgba(0, 168, 132, 0.12);
+}
+
+.provider-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-main, #e9edef);
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.provider-desc {
+  font-size: 11px;
+  color: var(--text-muted, #8696a0);
+  line-height: 1.35;
 }

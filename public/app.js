@@ -2,7 +2,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // State
   let personas = [];
   let activePersonaId = null;
-  let isGenerating = false;
+  const generatingPersonas = {};
 
   // DOM Elements
   const contactListEl = document.getElementById('contact-list');
@@ -71,9 +71,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const formAvatarPreview = document.getElementById('form-avatar-preview');
 
   const memoryModal = document.getElementById('memory-modal');
-  const memoryContentEl = document.getElementById('memory-content');
+  const memoryTextarea = document.getElementById('memory-textarea');
   const btnCloseMemoryModal = document.getElementById('btn-close-memory-modal');
   const btnCloseMemory = document.getElementById('btn-close-memory');
+  const btnSaveMemory = document.getElementById('btn-save-memory');
 
   // -------------------------------------------------------------
   // Initialization
@@ -95,26 +96,16 @@ document.addEventListener('DOMContentLoaded', () => {
   btnViewMemory.addEventListener('click', openMemoryModal);
   btnCloseMemoryModal.addEventListener('click', closeMemoryModal);
   btnCloseMemory.addEventListener('click', closeMemoryModal);
+  if (btnSaveMemory) btnSaveMemory.addEventListener('click', saveMemory);
 
   btnClearChat.addEventListener('click', clearActiveChat);
 
   searchInput.addEventListener('input', filterContacts);
 
-  let lastSendClickTime = 0;
-  let lastEmptyEnterTime = 0;
-
   btnSend.addEventListener('click', () => {
     const text = messageInput.value.trim();
     if (text) {
       sendMessage(text);
-    } else {
-      const now = Date.now();
-      if (now - lastSendClickTime < 500) {
-        lastSendClickTime = 0;
-        sendMessage('Continue...');
-      } else {
-        lastSendClickTime = now;
-      }
     }
   });
 
@@ -124,14 +115,6 @@ document.addEventListener('DOMContentLoaded', () => {
       const text = messageInput.value.trim();
       if (text) {
         sendMessage(text);
-      } else {
-        const now = Date.now();
-        if (now - lastEmptyEnterTime < 500) {
-          lastEmptyEnterTime = 0;
-          sendMessage('Continue...');
-        } else {
-          lastEmptyEnterTime = now;
-        }
       }
     }
   });
@@ -255,9 +238,12 @@ document.addEventListener('DOMContentLoaded', () => {
       item.className = `contact-item ${p.id === activePersonaId ? 'active' : ''}`;
       item.dataset.id = p.id;
       
-      const rawSnippet = p.lastMessageText || p.firstMessage || p.description || '';
-      const snippet = formatSnippetPreview(rawSnippet);
-      const timeDisplay = p.lastMessageTime || 'online';
+      const isGenerating = !!generatingPersonas[p.id];
+      const rawSnippet = isGenerating ? 'typing...' : (p.lastMessageText || p.firstMessage || p.description || '');
+      const snippet = isGenerating ? 'typing...' : formatSnippetPreview(rawSnippet);
+      const timeDisplay = isGenerating ? 'typing...' : (p.lastMessageTime || 'online');
+      const snippetStyle = isGenerating ? 'color: var(--accent-green); font-weight: 500;' : '';
+      const timeStyle = isGenerating ? 'color: var(--accent-green); font-weight: 500;' : '';
 
       item.innerHTML = `
         <div class="avatar-wrapper">
@@ -267,9 +253,9 @@ document.addEventListener('DOMContentLoaded', () => {
         <div class="contact-details">
           <div class="contact-top-row">
             <span class="contact-name">${escapeHtml(p.name)}</span>
-            <span class="contact-time">${escapeHtml(timeDisplay)}</span>
+            <span class="contact-time" style="${timeStyle}">${escapeHtml(timeDisplay)}</span>
           </div>
-          <div class="contact-snippet" title="${escapeHtml(rawSnippet)}">${escapeHtml(snippet)}</div>
+          <div class="contact-snippet" style="${snippetStyle}" title="${escapeHtml(rawSnippet)}">${escapeHtml(snippet)}</div>
         </div>
       `;
 
@@ -288,7 +274,6 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function selectPersona(personaId) {
-    if (isGenerating) return;
     activePersonaId = personaId;
     renderContactList(personas);
 
@@ -302,15 +287,24 @@ document.addEventListener('DOMContentLoaded', () => {
     // Update Header
     currentAvatarEl.src = persona.avatarUrl || '/uploads/default-avatar.svg';
     currentNameEl.textContent = persona.name;
-    currentStatusEl.textContent = 'online';
-    currentStatusEl.className = 'status-subtitle';
+    
+    if (generatingPersonas[personaId]) {
+      currentStatusEl.textContent = 'typing...';
+      currentStatusEl.className = 'status-subtitle typing';
+    } else {
+      currentStatusEl.textContent = 'online';
+      currentStatusEl.className = 'status-subtitle';
+    }
 
     // Fetch and render messages
     try {
       const res = await fetch(`/api/chats/${personaId}`);
       const data = await res.json();
-      if (data.success) {
+      if (data.success && activePersonaId === personaId) {
         renderMessages(data.messages);
+        if (generatingPersonas[personaId]) {
+          showTypingIndicator();
+        }
         if (data.messages && data.messages.length > 0) {
           const lastMsg = data.messages[data.messages.length - 1];
           updatePersonaLastMessaged(personaId, lastMsg.text, lastMsg.timestamp);
@@ -358,51 +352,78 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function splitResponseIntoMessages(fullText) {
     const text = fullText.trim();
-    const MAX_CHUNK_LENGTH = 600;
+    if (!text) return [];
 
-    if (!text || text.length <= MAX_CHUNK_LENGTH) {
+    const MAX_CHUNK_LENGTH = 1000;
+    if (text.length <= MAX_CHUNK_LENGTH) {
       return [text];
     }
 
     const paragraphs = text.split(/\n+/).map(p => p.trim()).filter(Boolean);
     const chunks = [];
+    let currentChunk = '';
 
     for (const para of paragraphs) {
       if (para.length <= MAX_CHUNK_LENGTH) {
-        if (chunks.length > 0 && (chunks[chunks.length - 1].length + para.length + 1) <= MAX_CHUNK_LENGTH) {
-          chunks[chunks.length - 1] += '\n\n' + para;
+        if (!currentChunk) {
+          currentChunk = para;
+        } else if (currentChunk.length + para.length + 2 <= MAX_CHUNK_LENGTH) {
+          currentChunk += '\n\n' + para;
         } else {
-          chunks.push(para);
+          chunks.push(currentChunk);
+          currentChunk = para;
         }
       } else {
-        const sentences = para.match(/[^.!?]+[.!?]+(\s+|$)/g) || [para];
-        let currentChunk = '';
-
-        for (const sentence of sentences) {
-          if ((currentChunk + sentence).length > MAX_CHUNK_LENGTH && currentChunk.length > 0) {
-            const astCount = (currentChunk.match(/\*/g) || []).length;
-            if (astCount % 2 !== 0) {
-              currentChunk += '*';
-              chunks.push(currentChunk.trim());
-              currentChunk = '*' + sentence;
+        let remaining = para;
+        while (remaining.length > 0) {
+          if (remaining.length <= MAX_CHUNK_LENGTH) {
+            if (!currentChunk) {
+              currentChunk = remaining;
+            } else if (currentChunk.length + remaining.length + 2 <= MAX_CHUNK_LENGTH) {
+              currentChunk += '\n\n' + remaining;
             } else {
-              chunks.push(currentChunk.trim());
-              currentChunk = sentence;
+              chunks.push(currentChunk);
+              currentChunk = remaining;
             }
+            break;
+          }
+
+          let splitIdx = -1;
+          const target = remaining.slice(0, MAX_CHUNK_LENGTH);
+          const match = target.search(/[.!?](?=[\s"]|$)[^.!?]*$/);
+          if (match !== -1) {
+            splitIdx = match + 1;
           } else {
-            currentChunk += sentence;
+            splitIdx = target.lastIndexOf(' ');
+          }
+
+          if (splitIdx <= 0) splitIdx = MAX_CHUNK_LENGTH;
+
+          const slicePart = remaining.slice(0, splitIdx).trim();
+          remaining = remaining.slice(splitIdx).trim();
+
+          if (slicePart) {
+            if (!currentChunk) {
+              currentChunk = slicePart;
+            } else if (currentChunk.length + slicePart.length + 2 <= MAX_CHUNK_LENGTH) {
+              currentChunk += '\n\n' + slicePart;
+            } else {
+              chunks.push(currentChunk);
+              currentChunk = slicePart;
+            }
           }
         }
-        if (currentChunk.trim()) {
-          chunks.push(currentChunk.trim());
-        }
       }
+    }
+
+    if (currentChunk) {
+      chunks.push(currentChunk);
     }
 
     return chunks.length > 0 ? chunks : [text];
   }
 
-  async function renderPersonaChunks(fullText) {
+  async function renderPersonaChunks(fullText, serverAssistantMsgId = null) {
     removeTypingIndicator();
     const chunks = splitResponseIntoMessages(fullText);
 
@@ -410,20 +431,8 @@ document.addEventListener('DOMContentLoaded', () => {
       const chunkText = chunks[i];
       if (!chunkText) continue;
 
-      // Show typing indicator before EVERY chunk (including the 1st one)
-      showTypingIndicator();
-      currentStatusEl.textContent = 'typing...';
-      currentStatusEl.className = 'status-subtitle typing';
-      scrollToBottom();
-
-      // Longer realistic typing delay (between 1400ms and 3200ms)
-      const delay = Math.min(3200, Math.max(1400, chunkText.length * 12));
-      await new Promise(r => setTimeout(r, delay));
-
-      removeTypingIndicator();
-
       appendMessageBubble({
-        id: `msg-${Date.now()}-${i}`,
+        id: (i === 0 && serverAssistantMsgId) ? serverAssistantMsgId : `msg-${Date.now()}-${i}`,
         sender: 'persona',
         text: chunkText,
         timestamp: new Date().toISOString()
@@ -466,7 +475,8 @@ document.addEventListener('DOMContentLoaded', () => {
       <div class="message-actions-toolbar">
         ${emojiBtnsHtml}
         <span class="toolbar-divider"></span>
-        <button class="action-btn retry-btn" title="Retry / Regenerate reply"><i class="fa-solid fa-rotate-right"></i></button>
+        ${msg.sender === 'persona' ? '<button class="action-btn continue-btn" title="Continue / Extend this message"><i class="fa-solid fa-angles-right"></i></button>' : ''}
+        ${msg.sender === 'persona' ? '<button class="action-btn retry-btn" title="Retry / Regenerate reply"><i class="fa-solid fa-rotate-right"></i></button>' : ''}
         <button class="action-btn delete-btn" title="Delete message"><i class="fa-solid fa-trash-can"></i></button>
       </div>
     `;
@@ -506,6 +516,15 @@ document.addEventListener('DOMContentLoaded', () => {
       retryBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         retryMessage(msg.id);
+      });
+    }
+
+    // 4. Continue Button (Persona bubbles)
+    const continueBtn = bubble.querySelector('.continue-btn');
+    if (continueBtn) {
+      continueBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        continuePersonaMessage(msg, bubble);
       });
     }
 
@@ -570,34 +589,38 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function retryMessage(msgId) {
-    if (!activePersonaId || isGenerating) return;
-    isGenerating = true;
+    const targetPersonaId = activePersonaId;
+    if (!targetPersonaId || generatingPersonas[targetPersonaId]) return;
+    generatingPersonas[targetPersonaId] = true;
 
-    // 1. Remove target persona bubble and any trailing bubbles in DOM feed
-    const targetBubble = document.getElementById(msgId) || document.querySelector(`[data-msg-id="${msgId}"]`);
-    if (targetBubble) {
-      let current = targetBubble.nextElementSibling;
-      while (current) {
-        const next = current.nextElementSibling;
-        current.remove();
-        current = next;
+    // 1. Remove target persona bubble and any trailing bubbles in DOM feed if active
+    if (activePersonaId === targetPersonaId) {
+      const targetBubble = document.getElementById(msgId) || document.querySelector(`[data-msg-id="${msgId}"]`);
+      if (targetBubble) {
+        let current = targetBubble.nextElementSibling;
+        while (current) {
+          const next = current.nextElementSibling;
+          current.remove();
+          current = next;
+        }
+        const isPersonaMsg = targetBubble.classList.contains('persona');
+        if (isPersonaMsg) {
+          targetBubble.remove();
+        }
       }
-      const isPersonaMsg = targetBubble.classList.contains('persona');
-      if (isPersonaMsg) {
-        targetBubble.remove();
-      }
+
+      showTypingIndicator();
+      currentStatusEl.textContent = 'typing...';
+      currentStatusEl.className = 'status-subtitle typing';
+      scrollToBottom();
     }
-
-    // 2. Show Typing Indicator Bubble at that exact spot & update header status
-    showTypingIndicator();
-    currentStatusEl.textContent = 'typing...';
-    currentStatusEl.className = 'status-subtitle typing';
-    scrollToBottom();
+    renderContactList(personas);
 
     let fullResponseText = '';
+    let serverAssistantMsgId = null;
 
     try {
-      const response = await fetch(`/api/chats/${activePersonaId}/retry`, {
+      const response = await fetch(`/api/chats/${targetPersonaId}/retry`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ messageId: msgId })
@@ -625,6 +648,9 @@ document.addEventListener('DOMContentLoaded', () => {
               if (data.text) {
                 fullResponseText += data.text;
               }
+              if (data.id) {
+                serverAssistantMsgId = data.id;
+              }
               if (data.error) {
                 fullResponseText += ` [Error: ${data.error}]`;
               }
@@ -637,18 +663,25 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // 3. Remove typing indicator & insert new persona message chunks
       if (fullResponseText.trim()) {
-        await renderPersonaChunks(fullResponseText.trim());
+        updatePersonaLastMessaged(targetPersonaId, fullResponseText.trim());
+        if (activePersonaId === targetPersonaId) {
+          await renderPersonaChunks(fullResponseText.trim(), serverAssistantMsgId);
+        }
       }
     } catch (err) {
-      console.error('Retry stream error:', err);
-      removeTypingIndicator();
+      console.error('Retry request error:', err);
+      if (activePersonaId === targetPersonaId) {
+        removeTypingIndicator();
+      }
     } finally {
-      removeTypingIndicator();
-      isGenerating = false;
-      currentStatusEl.textContent = 'online';
-      currentStatusEl.className = 'status-subtitle';
-      scrollToBottom();
-      loadPersonas();
+      generatingPersonas[targetPersonaId] = false;
+      if (activePersonaId === targetPersonaId) {
+        removeTypingIndicator();
+        currentStatusEl.textContent = 'online';
+        currentStatusEl.className = 'status-subtitle';
+        scrollToBottom();
+      }
+      renderContactList(personas);
     }
   }
 
@@ -737,13 +770,14 @@ document.addEventListener('DOMContentLoaded', () => {
   // -------------------------------------------------------------
   async function sendMessage(overrideText = null) {
     const text = overrideText !== null ? overrideText : messageInput.value.trim();
-    if (!text || !activePersonaId || isGenerating) return;
+    const targetPersonaId = activePersonaId;
+    if (!text || !targetPersonaId || generatingPersonas[targetPersonaId]) return;
 
     messageInput.value = '';
     messageInput.style.height = 'auto';
-    isGenerating = true;
+    generatingPersonas[targetPersonaId] = true;
 
-    // 1. Render User Message with SINGLE CHECKMARK (Sent)
+    // 1. Render User Message with SINGLE CHECKMARK (Sent) if still active persona view
     const userMsgId = `user-msg-${Date.now()}`;
     const userMsg = {
       id: userMsgId,
@@ -752,27 +786,38 @@ document.addEventListener('DOMContentLoaded', () => {
       timestamp: new Date().toISOString(),
       isRead: false
     };
-    const userBubble = appendMessageBubble(userMsg);
-    scrollToBottom();
-    updatePersonaLastMessaged(activePersonaId, text);
+    let userBubble = null;
+    if (activePersonaId === targetPersonaId) {
+      userBubble = appendMessageBubble(userMsg);
+      scrollToBottom();
+    }
+    updatePersonaLastMessaged(targetPersonaId, text);
+    renderContactList(personas);
 
-    // 2. Realistic 950ms delay while single checkmark (Sent) remains visible
-    await new Promise(r => setTimeout(r, 950));
+    // 2. Mark User Message as READ (Blue Double Checkmark) and show Typing Indicator immediately
+    if (userBubble) {
+      const checkIcon = userBubble.querySelector('.msg-status-check');
+      if (checkIcon) {
+        checkIcon.className = 'fa-solid fa-check-double msg-status-check';
+        checkIcon.style.color = '#53bdeb';
+      }
+    }
 
-    // 3. Mark User Message as READ (Blue Double Checkmark)
-    const checkIcon = userBubble.querySelector('.msg-status-check');
-    if (checkIcon) {
-      checkIcon.className = 'fa-solid fa-check-double msg-status-check';
-      checkIcon.style.color = '#53bdeb';
+    if (activePersonaId === targetPersonaId) {
+      showTypingIndicator();
+      currentStatusEl.textContent = 'typing...';
+      currentStatusEl.className = 'status-subtitle typing';
+      scrollToBottom();
     }
 
     let fullResponseText = '';
+    let serverAssistantMsgId = null;
 
     try {
-      const response = await fetch(`/api/chats/${activePersonaId}/stream`, {
+      const response = await fetch(`/api/chats/${targetPersonaId}/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text })
+        body: JSON.stringify({ text, userMsgId })
       });
 
       const reader = response.body.getReader();
@@ -797,6 +842,9 @@ document.addEventListener('DOMContentLoaded', () => {
               if (data.text) {
                 fullResponseText += data.text;
               }
+              if (data.assistantMsgId) {
+                serverAssistantMsgId = data.assistantMsgId;
+              }
               if (data.error) {
                 fullResponseText += ` [Error: ${data.error}]`;
               }
@@ -807,28 +855,111 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       }
 
-      // 5. Full Response Arrived -> Render persona message chunks
+      // 5. Full Response Arrived -> Render persona message chunks if active
       if (fullResponseText.trim()) {
-        await renderPersonaChunks(fullResponseText.trim());
-        updatePersonaLastMessaged(activePersonaId, fullResponseText.trim());
+        updatePersonaLastMessaged(targetPersonaId, fullResponseText.trim());
+        if (activePersonaId === targetPersonaId) {
+          await renderPersonaChunks(fullResponseText.trim(), serverAssistantMsgId);
+        }
       }
     } catch (err) {
       console.error('Stream request error:', err);
-      removeTypingIndicator();
-      appendMessageBubble({
-        id: `msg-${Date.now()}`,
-        sender: 'persona',
-        text: '[Connection error. Please try again.]',
-        timestamp: new Date().toISOString()
-      });
-      scrollToBottom();
+      if (activePersonaId === targetPersonaId) {
+        removeTypingIndicator();
+        appendMessageBubble({
+          id: `msg-${Date.now()}`,
+          sender: 'persona',
+          text: '[Connection error. Please try again.]',
+          timestamp: new Date().toISOString()
+        });
+        scrollToBottom();
+      }
     } finally {
-      removeTypingIndicator();
-      isGenerating = false;
-      currentStatusEl.textContent = 'online';
-      currentStatusEl.className = 'status-subtitle';
+      generatingPersonas[targetPersonaId] = false;
+      if (activePersonaId === targetPersonaId) {
+        removeTypingIndicator();
+        currentStatusEl.textContent = 'online';
+        currentStatusEl.className = 'status-subtitle';
+        scrollToBottom();
+      }
+      renderContactList(personas);
+    }
+  }
+
+  async function continuePersonaMessage(msg, bubble) {
+    const targetPersonaId = activePersonaId;
+    if (!targetPersonaId || generatingPersonas[targetPersonaId]) return;
+    generatingPersonas[targetPersonaId] = true;
+
+    if (activePersonaId === targetPersonaId) {
+      showTypingIndicator();
+      currentStatusEl.textContent = 'typing...';
+      currentStatusEl.className = 'status-subtitle typing';
       scrollToBottom();
-      loadPersonas();
+    }
+    renderContactList(personas);
+
+    let textEl = bubble.querySelector('.message-text');
+    let appendedText = '';
+    const originalText = msg.text;
+
+    try {
+      const response = await fetch(`/api/chats/${targetPersonaId}/messages/${msg.id}/continue`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder('utf-8');
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop();
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const jsonStr = line.slice(6).trim();
+            if (!jsonStr) continue;
+
+            try {
+              const data = JSON.parse(jsonStr);
+              if (data.text) {
+                appendedText += data.text;
+                msg.text = (originalText + '\n\n' + appendedText).trim();
+                if (activePersonaId === targetPersonaId && textEl) {
+                  textEl.innerHTML = formatMessageText(msg.text);
+                  scrollToBottom();
+                }
+              }
+            } catch (e) {
+              console.error('SSE JSON parse error:', e);
+            }
+          }
+        }
+      }
+
+      if (msg.text) {
+        updatePersonaLastMessaged(targetPersonaId, msg.text);
+      }
+    } catch (err) {
+      console.error('Continue persona message error:', err);
+      if (activePersonaId === targetPersonaId) {
+        removeTypingIndicator();
+      }
+    } finally {
+      generatingPersonas[targetPersonaId] = false;
+      if (activePersonaId === targetPersonaId) {
+        removeTypingIndicator();
+        currentStatusEl.textContent = 'online';
+        currentStatusEl.className = 'status-subtitle';
+        scrollToBottom();
+      }
+      renderContactList(personas);
     }
   }
 
@@ -875,17 +1006,45 @@ document.addEventListener('DOMContentLoaded', () => {
 
   async function openMemoryModal() {
     if (!activePersonaId) return;
-    memoryContentEl.textContent = 'Loading memory log...';
+    memoryTextarea.value = 'Loading memory log...';
     memoryModal.classList.remove('hidden');
 
     try {
       const res = await fetch(`/api/chats/${activePersonaId}`);
       const data = await res.json();
       if (data.success && data.persona) {
-        memoryContentEl.textContent = data.persona.storyMemory || 'No persistent story memories recorded yet.';
+        memoryTextarea.value = data.persona.storyMemory || '';
       }
     } catch (err) {
-      memoryContentEl.textContent = 'Error loading memory log.';
+      memoryTextarea.value = 'Error loading memory log.';
+    }
+  }
+
+  async function saveMemory() {
+    if (!activePersonaId) return;
+    const updatedMemory = memoryTextarea.value.trim();
+
+    try {
+      btnSaveMemory.disabled = true;
+      btnSaveMemory.textContent = 'Saving...';
+      const res = await fetch(`/api/chats/${activePersonaId}/memory`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ memory: updatedMemory })
+      });
+      const data = await res.json();
+      if (data.success) {
+        const persona = personas.find(item => item.id === activePersonaId);
+        if (persona) {
+          persona.storyMemory = data.memory;
+        }
+        closeMemoryModal();
+      }
+    } catch (err) {
+      console.error('Save memory error:', err);
+    } finally {
+      btnSaveMemory.disabled = false;
+      btnSaveMemory.textContent = 'Save Memory';
     }
   }
 
@@ -905,7 +1064,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function formatMessageText(str) {
     if (!str) return '';
-    let escaped = escapeHtml(str);
+    let text = str.trim();
+    text = text.replace(/^""\s*/, '').replace(/^"\s*(?=[a-z*])/i, '');
+    let escaped = escapeHtml(text);
 
     // 1. Clean orphan asterisks like "* " or " *"
     escaped = escaped.replace(/(^|\s)\*{1,2}(\s|$)/g, '$1$2');
@@ -917,5 +1078,140 @@ document.addEventListener('DOMContentLoaded', () => {
     escaped = escaped.replace(/(^|\s)\*{1,2}([^*<]+)$/g, '$1<span class="message-action">$2</span>');
 
     return escaped;
+  }
+
+  // -------------------------------------------------------------
+  // AI Settings Modal (Provider & Model Selection)
+  // -------------------------------------------------------------
+  const btnUserProfile = document.getElementById('btn-user-profile');
+  const settingsModal = document.getElementById('settings-modal');
+  const btnCloseSettingsModal = document.getElementById('btn-close-settings-modal');
+  const btnCancelSettings = document.getElementById('btn-cancel-settings');
+  const btnSaveSettings = document.getElementById('btn-save-settings');
+  
+  const cardOpenrouter = document.getElementById('card-openrouter');
+  const cardDeepinfra = document.getElementById('card-deepinfra');
+  const settingsModelPreset = document.getElementById('settings-model-preset');
+  const settingsModelCustom = document.getElementById('settings-model-custom');
+  const settingsTemp = document.getElementById('settings-temp');
+  const tempValDisplay = document.getElementById('temp-val-display');
+
+  let activeProvider = 'openrouter';
+
+  if (btnUserProfile) {
+    btnUserProfile.addEventListener('click', openSettingsModal);
+  }
+  if (btnCloseSettingsModal) btnCloseSettingsModal.addEventListener('click', closeSettingsModal);
+  if (btnCancelSettings) btnCancelSettings.addEventListener('click', closeSettingsModal);
+  if (btnSaveSettings) btnSaveSettings.addEventListener('click', saveSettings);
+
+  if (cardOpenrouter) {
+    cardOpenrouter.addEventListener('click', () => setProviderCard('openrouter'));
+  }
+  if (cardDeepinfra) {
+    cardDeepinfra.addEventListener('click', () => setProviderCard('deepinfra'));
+  }
+
+  if (settingsTemp && tempValDisplay) {
+    settingsTemp.addEventListener('input', (e) => {
+      tempValDisplay.textContent = parseFloat(e.target.value).toFixed(2);
+    });
+  }
+
+  if (settingsModelPreset && settingsModelCustom) {
+    settingsModelPreset.addEventListener('change', (e) => {
+      if (e.target.value === 'custom') {
+        settingsModelCustom.classList.remove('hidden');
+      } else {
+        settingsModelCustom.classList.add('hidden');
+      }
+    });
+  }
+
+  function setProviderCard(provider) {
+    activeProvider = provider;
+    if (provider === 'deepinfra') {
+      cardDeepinfra.classList.add('active');
+      cardOpenrouter.classList.remove('active');
+    } else {
+      cardOpenrouter.classList.add('active');
+      cardDeepinfra.classList.remove('active');
+    }
+  }
+
+  async function openSettingsModal() {
+    try {
+      const res = await fetch('/api/settings');
+      const data = await res.json();
+      if (data.success && data.settings) {
+        const s = data.settings;
+        setProviderCard(s.provider || 'openrouter');
+        const modelVal = s.model || 'sao10k/l3.3-euryale-70b';
+
+        let matched = false;
+        for (let i = 0; i < settingsModelPreset.options.length; i++) {
+          if (settingsModelPreset.options[i].value === modelVal) {
+            settingsModelPreset.selectedIndex = i;
+            matched = true;
+            break;
+          }
+        }
+
+        if (!matched) {
+          settingsModelPreset.value = 'custom';
+          settingsModelCustom.value = modelVal;
+          settingsModelCustom.classList.remove('hidden');
+        } else {
+          settingsModelCustom.classList.add('hidden');
+        }
+
+        const temp = s.temperature !== undefined ? s.temperature : 0.68;
+        settingsTemp.value = temp;
+        tempValDisplay.textContent = parseFloat(temp).toFixed(2);
+      }
+    } catch (err) {
+      console.error('Fetch settings error:', err);
+    }
+    settingsModal.classList.remove('hidden');
+  }
+
+  function closeSettingsModal() {
+    settingsModal.classList.add('hidden');
+  }
+
+  async function saveSettings() {
+    let chosenModel = settingsModelPreset.value;
+    if (chosenModel === 'custom') {
+      chosenModel = settingsModelCustom.value.trim();
+      if (!chosenModel) {
+        alert('Please enter a valid custom model identifier.');
+        return;
+      }
+    }
+
+    const payload = {
+      provider: activeProvider,
+      model: chosenModel,
+      temperature: parseFloat(settingsTemp.value)
+    };
+
+    try {
+      btnSaveSettings.disabled = true;
+      btnSaveSettings.textContent = 'Saving...';
+      const res = await fetch('/api/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (data.success) {
+        closeSettingsModal();
+      }
+    } catch (err) {
+      console.error('Save settings error:', err);
+    } finally {
+      btnSaveSettings.disabled = false;
+      btnSaveSettings.textContent = 'Save Settings';
+    }
   }
 });

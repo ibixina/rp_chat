@@ -19,7 +19,7 @@
     <aside class="sidebar">
       <!-- Sidebar Header -->
       <header class="sidebar-header">
-        <div class="user-avatar-placeholder">
+        <div class="user-avatar-placeholder" id="btn-user-profile" title="AI Engine Settings & Provider Switcher">
           <i class="fa-solid fa-circle-user"></i>
         </div>
         <div class="header-actions">
@@ -145,13 +145,13 @@
         <!-- Description / Persona Background -->
         <div class="form-group">
           <label for="form-description">Persona Background & Character Profile</label>
-          <textarea id="form-description" name="description" rows="4" placeholder="Describe their personality, voice, secrets, backstory, and how they should act..." required></textarea>
+          <textarea id="form-description" name="description" rows="10" placeholder="Describe their personality, voice, secrets, backstory, and how they should act..." required></textarea>
         </div>
 
         <!-- Initial Greeting -->
         <div class="form-group">
           <label for="form-first-message">Initial Greeting Message</label>
-          <input type="text" id="form-first-message" name="firstMessage" placeholder="e.g. Hey, good to hear from you!">
+          <textarea id="form-first-message" name="firstMessage" rows="3" placeholder="e.g. Hey, good to hear from you!"></textarea>
         </div>
 
         <div class="modal-footer">
@@ -162,7 +162,7 @@
     </div>
   </div>
 
-  <!-- MODAL: MEMORY LOG INSPECTOR -->
+  <!-- MODAL: MEMORY LOG INSPECTOR & EDITOR -->
   <div class="modal-overlay hidden" id="memory-modal">
     <div class="modal-card">
       <div class="modal-header">
@@ -170,13 +170,64 @@
         <button id="btn-close-memory-modal" class="close-btn">&times;</button>
       </div>
       <div class="modal-body">
-        <p class="memory-help-text">This persistent story memory is automatically updated every 6 conversational turns to anchor established story facts, relationship progression, and events.</p>
-        <div class="memory-content-box" id="memory-content">
-          Loading memory log...
+        <p class="memory-help-text">This persistent story memory is automatically updated every 6 conversational turns. You can directly edit, add, or delete memory sections below, and your changes will anchor into future AI turns.</p>
+        <div class="form-group">
+          <textarea id="memory-textarea" class="memory-edit-textarea" rows="14" placeholder="Enter story memory log..."></textarea>
         </div>
       </div>
       <div class="modal-footer">
-        <button type="button" class="btn btn-primary" id="btn-close-memory">Done</button>
+        <button type="button" class="btn btn-secondary" id="btn-close-memory">Cancel</button>
+        <button type="button" class="btn btn-primary" id="btn-save-memory">Save Memory</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: AI ENGINE & PROVIDER SETTINGS -->
+  <div class="modal-overlay hidden" id="settings-modal">
+    <div class="modal-card" style="max-width: 520px;">
+      <div class="modal-header">
+        <h3><i class="fa-solid fa-sliders"></i> AI Provider & Model Settings</h3>
+        <button id="btn-close-settings-modal" class="close-btn">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Inference Provider</label>
+          <div class="provider-options-grid">
+            <label class="provider-card active" id="card-openrouter">
+              <input type="radio" name="provider" value="openrouter" checked style="display:none;">
+              <div class="provider-title"><i class="fa-solid fa-globe"></i> OpenRouter</div>
+              <div class="provider-desc">Unrestricted Euryale 70B & open-source models with latency routing.</div>
+            </label>
+            <label class="provider-card" id="card-deepinfra">
+              <input type="radio" name="provider" value="deepinfra" style="display:none;">
+              <div class="provider-title"><i class="fa-solid fa-bolt"></i> DeepInfra</div>
+              <div class="provider-desc">Direct high-speed completion engine for Hermes-3 70B & Llama models.</div>
+            </label>
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="settings-model-preset">Model Engine Selection</label>
+          <select id="settings-model-preset" class="form-control" style="margin-bottom: 8px;">
+            <option value="sao10k/l3.3-euryale-70b">OpenRouter: sao10k/l3.3-euryale-70b (Unrestricted RP)</option>
+            <option value="meta-llama/llama-3.3-70b-instruct">OpenRouter: meta-llama/llama-3.3-70b-instruct (Fast 70B)</option>
+            <option value="gryphe/mythomax-l2-13b">OpenRouter: gryphe/mythomax-l2-13b (Classic RP)</option>
+            <option value="NousResearch/Hermes-3-Llama-3.1-70B">DeepInfra: NousResearch/Hermes-3-Llama-3.1-70B</option>
+            <option value="meta-llama/Llama-3.3-70B-Instruct">DeepInfra: meta-llama/Llama-3.3-70B-Instruct</option>
+            <option value="custom">Custom Model Identifier...</option>
+          </select>
+          <input type="text" id="settings-model-custom" placeholder="Enter custom model string (e.g. sao10k/l3.3-euryale-70b)" class="hidden" style="margin-top: 4px;" />
+        </div>
+
+        <div class="form-group">
+          <label for="settings-temp">Temperature Pacing: <span id="temp-val-display" style="color: var(--accent-green); font-weight: 600;">0.68</span></label>
+          <input type="range" id="settings-temp" min="0.10" max="1.50" step="0.02" value="0.68" style="width: 100%; cursor: pointer;">
+          <span style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">0.68 is tuned for strict physical continuity & grounded narrative turns.</span>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" id="btn-cancel-settings">Cancel</button>
+        <button type="button" class="btn btn-primary" id="btn-save-settings">Save Settings</button>
       </div>
     </div>
   </div>

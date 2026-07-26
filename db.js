@@ -215,5 +215,25 @@ module.exports = {
       persona.storyMemory = memoryText;
       writeDB(db);
     }
+  },
+
+  getSettings() {
+    const db = readDB();
+    return db.settings || {
+      provider: 'openrouter',
+      model: 'sao10k/l3.3-euryale-70b',
+      temperature: 0.68
+    };
+  },
+
+  saveSettings(settings) {
+    const db = readDB();
+    db.settings = {
+      provider: settings.provider || 'openrouter',
+      model: settings.model || 'sao10k/l3.3-euryale-70b',
+      temperature: settings.temperature ? parseFloat(settings.temperature) : 0.68
+    };
+    writeDB(db);
+    return db.settings;
   }
 };
