@@ -1204,17 +1204,37 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
   // -------------------------------------------------------------
   // Message Bubbles & Actions
   // -------------------------------------------------------------
-  function formatMessageText(text) {
-    if (!text) return '';
+  function formatMessageText(str) {
+    if (!str) return '';
+    let text = str.trim();
+    text = text.replace(/^""\s*/, '').replace(/^"\s*(?=[a-z*])/i, '');
     let escaped = escapeHtml(text);
 
-    // Markdown images ![alt](url)
-    escaped = escaped.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (match, alt, url) => {
-      return `<img src="${url}" alt="${alt}">`;
-    });
+    // 1. Clean orphan asterisks like "* " or " *"
+    escaped = escaped.replace(/(^|\s)\*{1,2}(\s|$)/g, '$1$2');
 
-    // Action text *action* -> <span class="message-action">$1</span>
-    escaped = escaped.replace(/\*([^*]+)\*/g, '<span class="message-action">$1</span>');
+    // Helper to format asterisk content: preserve quoted dialogue as normal text, wrap narrative in message-action
+    function formatActionContent(innerText) {
+      if (!innerText.includes('&quot;')) {
+        return `<span class="message-action">${innerText}</span>`;
+      }
+      const parts = innerText.split(/(&quot;[^&]*?&quot;)/g);
+      return parts.map(part => {
+        if (!part) return '';
+        if (part.startsWith('&quot;') && part.endsWith('&quot;')) {
+          return part;
+        } else {
+          return `<span class="message-action">${part}</span>`;
+        }
+      }).join('');
+    }
+
+    // 2. Format paired asterisks: *action* or **action**
+    escaped = escaped.replace(/\*{1,2}([^*]+?)\*{1,2}/g, (match, innerText) => formatActionContent(innerText));
+
+    // 3. Format unclosed asterisks: *action until end of text/chunk
+    escaped = escaped.replace(/(^|\s)\*{1,2}([^*<]+)$/g, (match, prefix, innerText) => prefix + formatActionContent(innerText));
+
     escaped = escaped.replace(/\n/g, '<br>');
     return escaped;
   }
