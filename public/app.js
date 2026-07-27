@@ -1792,7 +1792,7 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
 
       const totalMsgs = messages.length;
       const remainder = totalMsgs % 6;
-      const turnsRemaining = remainder === 0 ? (totalMsgs > 0 ? 0 : 6) : (6 - remainder);
+      const turnsRemaining = remainder === 0 ? 6 : (6 - remainder);
 
       const lastSyncEl = document.getElementById('memory-last-sync-time');
       const turnsLeftEl = document.getElementById('memory-turns-remaining');
@@ -1804,7 +1804,7 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
       }
 
       if (turnsLeftEl) {
-        turnsLeftEl.textContent = turnsRemaining === 0 ? 'Syncing on next turn' : `${turnsRemaining} turn${turnsRemaining === 1 ? '' : 's'} left`;
+        turnsLeftEl.textContent = `${turnsRemaining} turn${turnsRemaining === 1 ? '' : 's'} left`;
       }
 
       showModal(memoryModal);
