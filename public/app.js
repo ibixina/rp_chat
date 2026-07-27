@@ -1281,7 +1281,12 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
     // 1. Clean orphan asterisks like "* " or " *"
     escaped = escaped.replace(/(^|\s)\*{1,2}(\s|$)/g, '$1$2');
 
-    // Helper to format asterisk content: preserve quoted dialogue as normal text, wrap narrative in message-action
+    // 2. Format double asterisks **bold dialogue** first
+    escaped = escaped.replace(/\*\*([^*]+(?:\*[^*]+)*?)\*\*/g, (match, innerText) => {
+      return `<strong>${innerText}</strong>`;
+    });
+
+    // Helper to format single asterisk action content: preserve quoted dialogue as normal text
     function formatActionContent(innerText) {
       if (!innerText.includes('&quot;')) {
         return `<span class="message-action">${innerText}</span>`;
@@ -1297,11 +1302,13 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
       }).join('');
     }
 
-    // 2. Format paired asterisks: *action* or **action**
-    escaped = escaped.replace(/\*{1,2}([^*]+?)\*{1,2}/g, (match, innerText) => formatActionContent(innerText));
+    // 3. Format single asterisk *action* second
+    escaped = escaped.replace(/\*([^*]+)\*/g, (match, innerText) => {
+      return formatActionContent(innerText);
+    });
 
-    // 3. Format unclosed asterisks: *action until end of text/chunk
-    escaped = escaped.replace(/(^|\s)\*{1,2}([^*<]+)$/g, (match, prefix, innerText) => prefix + formatActionContent(innerText));
+    // 4. Format unclosed asterisks for streaming chunks: *action until end of text/chunk
+    escaped = escaped.replace(/(^|\s)\*([^*<]+)$/g, (match, prefix, innerText) => prefix + formatActionContent(innerText));
 
     escaped = escaped.replace(/\n/g, '<br>');
     return escaped;
