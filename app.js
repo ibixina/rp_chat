@@ -208,6 +208,9 @@ document.addEventListener('DOMContentLoaded', () => {
       const raw = this.getRaw();
       const p = (raw.personas || []).find(item => item.id === personaId);
       const initialMsg = p ? (p.firstMessage || 'Hello!') : 'Hello!';
+      if (p) {
+        p.lastSyncedMessageCount = 0;
+      }
       raw.messages[personaId] = [
         {
           id: `msg-${Date.now()}`,
@@ -477,8 +480,11 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
       if (newMemory && newMemory.trim()) {
         const nowIso = new Date().toISOString();
         LocalDB.updateMemory(persona.id, newMemory.trim());
-        LocalDB.updatePersona(persona.id, { lastMemorySyncTime: nowIso });
-        logEvent('MEMORY', `Story Memory auto-summarized and saved for ${persona.name}`, { memoryLength: newMemory.trim().length });
+        LocalDB.updatePersona(persona.id, { 
+          lastMemorySyncTime: nowIso,
+          lastSyncedMessageCount: messages.length
+        });
+        logEvent('MEMORY', `Story Memory auto-summarized and saved for ${persona.name}`, { memoryLength: newMemory.trim().length, syncedAtMessageCount: messages.length });
       }
     } catch (err) {
       logEvent('MEMORY', `Memory auto-summarization skipped: ${err.message}`);
@@ -1619,11 +1625,14 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
       LocalDB.addMessage(personaId, finalAssistantMsg);
 
       const allMsgs = LocalDB.getMessages(personaId);
-      const remainder = allMsgs.length % 6;
-      if (remainder === 0) {
+      const lastSyncedCount = persona.lastSyncedMessageCount || 0;
+      const msgsSinceSync = Math.max(allMsgs.length - lastSyncedCount, 0);
+
+      if (msgsSinceSync >= 6) {
         triggerMemorySummarization(persona, allMsgs, settings);
       } else {
-        logEvent('MEMORY', `Turn ${allMsgs.length} completed. Next auto-summarization in ${6 - remainder} turn(s).`);
+        const turnsLeft = 6 - msgsSinceSync;
+        logEvent('MEMORY', `Turn ${allMsgs.length} completed. Messages since last sync: ${msgsSinceSync}/6. Next auto-summarization in ${turnsLeft} turn(s).`);
       }
 
     } catch (err) {
@@ -1791,8 +1800,9 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
       memoryTextarea.value = persona?.storyMemory || '';
 
       const totalMsgs = messages.length;
-      const remainder = totalMsgs % 6;
-      const turnsRemaining = remainder === 0 ? 6 : (6 - remainder);
+      const lastSyncedCount = persona?.lastSyncedMessageCount || 0;
+      const msgsSinceSync = Math.max(totalMsgs - lastSyncedCount, 0);
+      const turnsRemaining = Math.max(6 - msgsSinceSync, 0);
 
       const lastSyncEl = document.getElementById('memory-last-sync-time');
       const turnsLeftEl = document.getElementById('memory-turns-remaining');
@@ -1804,7 +1814,7 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
       }
 
       if (turnsLeftEl) {
-        turnsLeftEl.textContent = `${turnsRemaining} turn${turnsRemaining === 1 ? '' : 's'} left`;
+        turnsLeftEl.textContent = turnsRemaining === 0 ? 'Syncing on next turn' : `${turnsRemaining} turn${turnsRemaining === 1 ? '' : 's'} left`;
       }
 
       showModal(memoryModal);
@@ -1817,7 +1827,18 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
   if (btnSaveMemory) {
     btnSaveMemory.addEventListener('click', () => {
       if (!activePersonaId) return;
+      const msgs = LocalDB.getMessages(activePersonaId) || [];
+      const nowIso = new Date().toISOString();
       LocalDB.updateMemory(activePersonaId, memoryTextarea.value);
+      LocalDB.updatePersona(activePersonaId, {
+        lastMemorySyncTime: nowIso,
+        lastSyncedMessageCount: msgs.length
+      });
+      logEvent('MEMORY', `Story memory manually updated for persona ${activePersonaId}`, { syncedAtMessageCount: msgs.length });
+      showAlertDialog({
+        title: 'Memory Saved',
+        message: 'Story memory log updated successfully.'
+      });
       hideModal(memoryModal);
     });
   }
