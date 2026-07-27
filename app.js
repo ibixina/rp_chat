@@ -1273,44 +1273,62 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
     if (bubble.classList.contains('editing')) return;
     bubble.classList.add('editing');
 
-    const currentText = textEl.dataset.rawText || msg.text;
-    const input = document.createElement('textarea');
-    input.className = 'inline-edit-textarea';
-    input.value = currentText;
+    const originalText = msg.text;
+    textEl.textContent = originalText;
+    textEl.contentEditable = 'true';
+    textEl.classList.add('message-text-editing');
+    textEl.focus();
 
-    const btnContainer = document.createElement('div');
-    btnContainer.className = 'inline-edit-actions';
-    btnContainer.innerHTML = `
-      <button class="btn btn-secondary btn-sm cancel-edit">Cancel</button>
-      <button class="btn btn-primary btn-sm save-edit">Save</button>
-    `;
+    try {
+      const range = document.createRange();
+      range.selectNodeContents(textEl);
+      range.collapse(false);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    } catch (e) {}
 
-    textEl.style.display = 'none';
-    bubble.querySelector('.bubble-content')?.appendChild(input);
-    bubble.querySelector('.bubble-content')?.appendChild(btnContainer);
-    input.focus();
+    let isFinished = false;
 
-    const cancelBtn = btnContainer.querySelector('.cancel-edit');
-    const saveBtn = btnContainer.querySelector('.save-edit');
+    function saveAndExit(revert = false) {
+      if (isFinished) return;
+      isFinished = true;
 
-    const closeEdit = () => {
-      input.remove();
-      btnContainer.remove();
-      textEl.style.display = 'block';
+      textEl.removeEventListener('blur', handleBlur);
+      textEl.removeEventListener('keydown', handleKeyDown);
+
+      textEl.contentEditable = 'false';
+      textEl.classList.remove('message-text-editing');
       bubble.classList.remove('editing');
-    };
 
-    cancelBtn.addEventListener('click', closeEdit);
-    saveBtn.addEventListener('click', () => {
-      const newText = input.value.trim();
-      if (newText) {
+      const newText = textEl.innerText.trim();
+      if (!revert && newText && newText !== originalText) {
         msg.text = newText;
         textEl.dataset.rawText = newText;
         textEl.innerHTML = formatMessageText(newText);
         LocalDB.updateMessage(activePersonaId, msg.id, { text: newText });
+      } else {
+        textEl.dataset.rawText = originalText;
+        textEl.innerHTML = formatMessageText(originalText);
       }
-      closeEdit();
-    });
+    }
+
+    function handleBlur() {
+      saveAndExit(false);
+    }
+
+    function handleKeyDown(e) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        saveAndExit(false);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        saveAndExit(true);
+      }
+    }
+
+    textEl.addEventListener('blur', handleBlur);
+    textEl.addEventListener('keydown', handleKeyDown);
   }
 
   function toggleReaction(msg, emoji, bubble) {
