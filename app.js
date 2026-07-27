@@ -1041,7 +1041,7 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
 
       item.innerHTML = `
         <div class="avatar-wrapper">
-          <img src="${p.avatarUrl || './uploads/default-avatar.svg'}" alt="${escapeHtml(p.name)}" class="contact-avatar">
+          <img src="${p.avatarUrl || './uploads/default-avatar.svg'}" alt="${escapeHtml(p.name)}" class="contact-avatar" onerror="this.onerror=null; this.src='./uploads/default-avatar.svg';">
           <span class="online-badge"></span>
         </div>
         <div class="contact-details">
@@ -1082,6 +1082,7 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
     activeChatViewEl.classList.remove('hidden');
 
     currentAvatarEl.src = persona.avatarUrl || './uploads/default-avatar.svg';
+    currentAvatarEl.onerror = () => { currentAvatarEl.src = './uploads/default-avatar.svg'; };
     currentNameEl.textContent = persona.name;
 
     if (generatingPersonas[personaId]) {
