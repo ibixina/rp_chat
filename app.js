@@ -223,66 +223,39 @@ document.addEventListener('DOMContentLoaded', () => {
       return JSON.stringify(this.getRaw(), null, 2);
     },
 
-    importFullBackup(jsonData) {
-      const parsed = typeof jsonData === 'string' ? JSON.parse(jsonData) : jsonData;
-      if (!parsed.personas || !Array.isArray(parsed.personas)) {
-        throw new Error('Invalid backup file structure: missing personas array');
-      }
-      this.saveRaw(parsed);
-      return true;
-    },
+    importAnyJson(jsonInput) {
+      const data = typeof jsonInput === 'string' ? JSON.parse(jsonInput) : jsonInput;
 
-    importPerchance(jsonObj) {
-      const tables = jsonObj.data?.data || [];
-      const characters = tables.find(t => t.tableName === 'characters')?.rows || [];
-      const messages = tables.find(t => t.tableName === 'messages')?.rows || [];
-
-      if (characters.length === 0) {
-        throw new Error('No characters found in Perchance export file.');
+      // Case 1: Full App Backup format { personas: [...], messages: {...} }
+      if (data.personas && Array.isArray(data.personas)) {
+        this.saveRaw(data);
+        return { type: 'backup', count: data.personas.length, firstPersonaId: data.personas[0]?.id };
       }
 
-      const imported = [];
-      characters.forEach(char => {
-        const personaId = char.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-        let avatarUrl = './uploads/default-avatar.svg';
-        if (char.avatar && char.avatar.url && char.avatar.url.startsWith('data:image/')) {
-          avatarUrl = char.avatar.url;
+      // Case 2: Single Exported Chat/Persona format { persona: {...}, messages: [...] }
+      if (data.persona && data.persona.name) {
+        const personaData = data.persona;
+        if (!personaData.id) {
+          personaData.id = personaData.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
         }
-
-        const charMessages = messages
-          .filter(m => m.characterId === char.id || m.characterId === -1)
-          .sort((a, b) => a.order - b.order);
-
-        const formattedMessages = charMessages.map(m => ({
-          id: `msg-${m.id}`,
-          sender: m.characterId === -1 ? 'user' : 'persona',
-          text: m.message || '',
-          timestamp: new Date(m.creationTime).toISOString()
-        }));
-
-        const firstMsgText = formattedMessages[0]?.text || char.initialMessages?.[0]?.content || 'Hello!';
-
-        const lore = tables.find(t => t.tableName === 'lore')?.rows || [];
-        const loreText = lore.length > 0
-          ? lore.map((l, i) => `- ${l.text}`).join('\n')
-          : `Imported conversation history with ${char.name}. ${formattedMessages.length} messages loaded.`;
-
-        const personaData = {
-          id: personaId,
-          name: char.name,
-          avatarUrl: avatarUrl,
-          description: char.roleInstruction || char.metaDescription || '',
-          firstMessage: firstMsgText,
-          storyMemory: `### Key Relationship History & Story Milestones\n${loreText}`,
-          createdAt: new Date(char.creationTime || Date.now()).toISOString()
-        };
-
         this.savePersona(personaData);
-        this.setMessages(personaId, formattedMessages);
-        imported.push({ persona: personaData, count: formattedMessages.length });
-      });
+        if (data.messages && Array.isArray(data.messages)) {
+          this.setMessages(personaData.id, data.messages);
+        }
+        return { type: 'single', count: 1, firstPersonaId: personaData.id, name: personaData.name };
+      }
 
-      return imported;
+      // Case 3: Single Persona Object { id: "...", name: "...", description: "..." }
+      if (data.name && (data.description !== undefined || data.firstMessage !== undefined)) {
+        const personaData = data;
+        if (!personaData.id) {
+          personaData.id = personaData.name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+        }
+        this.savePersona(personaData);
+        return { type: 'single', count: 1, firstPersonaId: personaData.id, name: personaData.name };
+      }
+
+      throw new Error('Unrecognized JSON format. File must be a full app backup or an exported persona/chat JSON.');
     }
   };
 
@@ -577,7 +550,6 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
   // Backup & Import File Inputs
   const btnExportBackup = document.getElementById('btn-export-backup');
   const fileRestoreBackup = document.getElementById('file-restore-backup');
-  const fileImportPerchance = document.getElementById('file-import-perchance');
 
   // Import Modal & Header Trigger
   const importModal = document.getElementById('import-modal');
@@ -585,8 +557,7 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
   const btnCloseImportModal = document.getElementById('btn-close-import-modal');
   const btnCancelImportModal = document.getElementById('btn-cancel-import-modal');
 
-  const modalFileImportPerchance = document.getElementById('modal-file-import-perchance');
-  const modalFileRestoreBackup = document.getElementById('modal-file-restore-backup');
+  const modalFileImportAny = document.getElementById('modal-file-import-any');
   const modalBtnExportBackup = document.getElementById('modal-btn-export-backup');
   const modalBtnResetStorage = document.getElementById('modal-btn-reset-storage');
 
@@ -594,48 +565,32 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
   if (btnCloseImportModal) btnCloseImportModal.addEventListener('click', () => hideModal(importModal));
   if (btnCancelImportModal) btnCancelImportModal.addEventListener('click', () => hideModal(importModal));
 
-  if (modalFileImportPerchance) {
-    modalFileImportPerchance.addEventListener('change', (e) => {
+  function handleGenericImport(fileInput, closeImportModal = false) {
+    if (!fileInput) return;
+    fileInput.addEventListener('change', (e) => {
       const file = e.target.files[0];
       if (!file) return;
       const reader = new FileReader();
       reader.onload = (evt) => {
         try {
-          const json = JSON.parse(evt.target.result);
-          const imported = LocalDB.importPerchance(json);
+          const res = LocalDB.importAnyJson(evt.target.result);
           loadPersonas();
-          hideModal(importModal);
-          if (imported.length > 0) {
-            selectPersona(imported[0].persona.id);
-            alert(`Successfully imported ${imported.length} character(s)!`);
+          if (closeImportModal && importModal) hideModal(importModal);
+          if (res.firstPersonaId) {
+            selectPersona(res.firstPersonaId);
           }
+          alert(res.type === 'backup' ? `Successfully restored backup with ${res.count} persona(s)!` : `Successfully imported ${res.name || 'persona'}!`);
         } catch (err) {
-          alert('Perchance import failed: ' + err.message);
+          alert('Import failed: ' + err.message);
         }
+        fileInput.value = '';
       };
       reader.readAsText(file);
     });
   }
 
-  if (modalFileRestoreBackup) {
-    modalFileRestoreBackup.addEventListener('change', (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = (evt) => {
-        try {
-          LocalDB.importFullBackup(evt.target.result);
-          loadPersonas();
-          hideModal(importModal);
-          if (personas.length > 0) selectPersona(personas[0].id);
-          alert('Backup restored successfully!');
-        } catch (err) {
-          alert('Restore failed: ' + err.message);
-        }
-      };
-      reader.readAsText(file);
-    });
-  }
+  handleGenericImport(modalFileImportAny, true);
+  handleGenericImport(fileRestoreBackup, false);
 
   if (modalBtnExportBackup) {
     modalBtnExportBackup.addEventListener('click', () => {
@@ -682,47 +637,6 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
       a.download = `persona_chat_backup_${Date.now()}.json`;
       a.click();
       URL.revokeObjectURL(url);
-    });
-  }
-
-  if (fileRestoreBackup) {
-    fileRestoreBackup.addEventListener('change', (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = (evt) => {
-        try {
-          LocalDB.importFullBackup(evt.target.result);
-          loadPersonas();
-          if (personas.length > 0) selectPersona(personas[0].id);
-          alert('Backup restored successfully!');
-        } catch (err) {
-          alert('Restore failed: ' + err.message);
-        }
-      };
-      reader.readAsText(file);
-    });
-  }
-
-  if (fileImportPerchance) {
-    fileImportPerchance.addEventListener('change', (e) => {
-      const file = e.target.files[0];
-      if (!file) return;
-      const reader = new FileReader();
-      reader.onload = (evt) => {
-        try {
-          const json = JSON.parse(evt.target.result);
-          const imported = LocalDB.importPerchance(json);
-          loadPersonas();
-          if (imported.length > 0) {
-            selectPersona(imported[0].persona.id);
-            alert(`Successfully imported ${imported.length} character(s)!`);
-          }
-        } catch (err) {
-          alert('Perchance import failed: ' + err.message);
-        }
-      };
-      reader.readAsText(file);
     });
   }
 
