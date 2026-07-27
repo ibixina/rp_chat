@@ -1,11 +1,12 @@
 {
   "name": "persona-chat-app",
   "version": "1.0.0",
-  "description": "WhatsApp/Signal style persona chat app powered by DeepInfra Hermes-3 70B",
-  "main": "server.js",
+  "description": "WhatsApp/Signal style persona chat app powered by DeepInfra & OpenRouter",
+  "main": "index.html",
+  "homepage": ".",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node --watch server.js"
+    "start": "npx serve .",
+    "dev": "npx serve ."
   },
   "dependencies": {
     "compression": "^1.8.1",

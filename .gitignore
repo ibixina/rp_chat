@@ -4,10 +4,13 @@ node_modules/
 .DS_Store
 *.log
 
-# User Data & Uploads
+# Sensitive User Data & Uploads
+data/
 data/db.json
+uploads/*
+!uploads/default-avatar.svg
 public/uploads/*
-!public/uploads/.gitkeep
+!public/uploads/default-avatar.svg
 
 # Perchance Data Exports
 perchance-characters-export-*.json
