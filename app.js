@@ -579,9 +579,16 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
           if (res.firstPersonaId) {
             selectPersona(res.firstPersonaId);
           }
-          alert(res.type === 'backup' ? `Successfully restored backup with ${res.count} persona(s)!` : `Successfully imported ${res.name || 'persona'}!`);
+          showAlertDialog({
+            title: 'Import Successful',
+            message: res.type === 'backup' ? `Successfully restored backup with ${res.count} persona(s)!` : `Successfully imported ${res.name || 'persona'}!`
+          });
         } catch (err) {
-          alert('Import failed: ' + err.message);
+          showAlertDialog({
+            title: 'Import Failed',
+            message: err.message,
+            icon: 'error'
+          });
         }
         fileInput.value = '';
       };
@@ -621,7 +628,10 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
           if (personas.length > 0) {
             selectPersona(personas[0].id);
           }
-          alert('Browser data reset to default sample contact.');
+          showAlertDialog({
+            title: 'Storage Reset',
+            message: 'Browser data reset to default sample contact.'
+          });
         }
       });
     });
@@ -649,7 +659,30 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
   const btnActionConfirm = document.getElementById('btn-action-confirm');
   let confirmCallback = null;
 
+  function showAlertDialog({ title, message, icon = 'check', onConfirm }) {
+    if (confirmModalTitle) {
+      const isError = icon === 'error';
+      const iconClass = isError ? 'fa-circle-xmark' : 'fa-circle-check';
+      const iconColor = isError ? '#ea4335' : 'var(--accent-green)';
+      confirmModalTitle.innerHTML = `<i class="fa-solid ${iconClass}" style="color: ${iconColor};"></i> ${title || 'Notice'}`;
+    }
+    if (confirmModalMessage) confirmModalMessage.textContent = message || '';
+    if (btnActionConfirm) {
+      btnActionConfirm.textContent = 'OK';
+      btnActionConfirm.style.backgroundColor = 'var(--accent-green)';
+    }
+    if (btnCancelConfirm) {
+      btnCancelConfirm.style.display = 'none';
+    }
+    confirmCallback = () => {
+      if (btnCancelConfirm) btnCancelConfirm.style.display = '';
+      if (onConfirm) onConfirm();
+    };
+    showModal(confirmModal);
+  }
+
   function showConfirmDialog({ title, message, confirmText, danger = false, onConfirm }) {
+    if (btnCancelConfirm) btnCancelConfirm.style.display = '';
     if (confirmModalTitle) confirmModalTitle.innerHTML = `<i class="fa-solid fa-triangle-exclamation" style="color: ${danger ? '#ea4335' : 'var(--accent-green)'};"></i> ${title || 'Confirm Action'}`;
     if (confirmModalMessage) confirmModalMessage.textContent = message || 'Are you sure you want to proceed?';
     if (btnActionConfirm) {
@@ -1564,7 +1597,11 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
 
     } catch (err) {
       console.error('Continue error:', err);
-      alert('Failed to continue message: ' + err.message);
+      showAlertDialog({
+        title: 'Generation Failed',
+        message: err.message,
+        icon: 'error'
+      });
     } finally {
       generatingPersonas[targetPersonaId] = false;
       if (activePersonaId === targetPersonaId) {
