@@ -8,27 +8,10 @@ document.addEventListener('DOMContentLoaded', () => {
     async init() {
       let dataStr = localStorage.getItem(this.KEY);
       if (!dataStr) {
-        try {
-          const res = await fetch('./data/db.json');
-          if (res.ok) {
-            const seedData = await res.json();
-            if (seedData.personas) {
-              seedData.personas.forEach(p => {
-                if (p.avatarUrl && p.avatarUrl.startsWith('/uploads/')) {
-                  p.avatarUrl = '.' + p.avatarUrl;
-                }
-              });
-            }
-            localStorage.setItem(this.KEY, JSON.stringify(seedData));
-            return seedData;
-          }
-        } catch (err) {
-          console.warn('Failed to load seed db.json:', err);
-        }
         const defaultData = {
           personas: [
             {
-              id: 'default-alexa',
+              id: 'default-elena',
               name: 'Elena Vance',
               avatarUrl: './uploads/default-avatar.svg',
               description: 'A sharp, quick-witted investigative reporter with a taste for espresso and mystery.',
@@ -38,7 +21,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
           ],
           messages: {
-            'default-alexa': [
+            'default-elena': [
               {
                 id: 'msg-1',
                 sender: 'persona',
@@ -675,11 +658,14 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
         confirmText: 'Reset All Data',
         danger: true,
         onConfirm: async () => {
-          localStorage.removeItem('persona_db');
+          localStorage.clear();
           await LocalDB.init();
-          activePersonaId = null;
           hideModal(importModal);
-          loadPersonas();
+          personas = LocalDB.getPersonas();
+          renderContactList(personas);
+          if (personas.length > 0) {
+            selectPersona(personas[0].id);
+          }
           alert('Browser data reset to default sample contact.');
         }
       });
