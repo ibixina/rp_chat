@@ -1050,7 +1050,7 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
             <span class="contact-time">${p.lastMessageTime || ''}</span>
           </div>
           <div class="contact-snippet ${isTyping ? 'typing' : ''}">
-            ${isTyping ? '<i class="fa-solid fa-pen-nib"></i> typing...' : escapeHtml(p.lastMessageText || p.description)}
+            ${isTyping ? '<span style="color: #53bdeb; font-style: italic;">typing...</span>' : escapeHtml(p.lastMessageText || p.description)}
           </div>
         </div>
       `;
@@ -1192,7 +1192,9 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
     }
 
     bubble.innerHTML = `
-      <div class="message-text" data-raw-text="${escapeHtml(msg.text)}" title="Double-click to edit text">${formatMessageText(msg.text)}</div>
+      <div class="bubble-content">
+        <div class="message-text" data-raw-text="${escapeHtml(msg.text)}" title="Double-click to edit text">${formatMessageText(msg.text)}</div>
+      </div>
       ${renderReactionsHtml(msg.reactions)}
       <div class="message-meta">
         <span>${timeStr}</span>
@@ -1276,76 +1278,69 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
     input.className = 'inline-edit-textarea';
     input.value = currentText;
 
-    const actionBox = document.createElement('div');
-    actionBox.className = 'inline-edit-actions';
-    actionBox.innerHTML = `
-      <button class="btn btn-secondary btn-sm cancel-edit-btn">Cancel</button>
-      <button class="btn btn-primary btn-sm save-edit-btn">Save</button>
+    const btnContainer = document.createElement('div');
+    btnContainer.className = 'inline-edit-actions';
+    btnContainer.innerHTML = `
+      <button class="btn btn-secondary btn-sm cancel-edit">Cancel</button>
+      <button class="btn btn-primary btn-sm save-edit">Save</button>
     `;
 
     textEl.style.display = 'none';
-    textEl.parentNode.insertBefore(input, textEl.nextSibling);
-    textEl.parentNode.insertBefore(actionBox, input.nextSibling);
+    bubble.querySelector('.bubble-content')?.appendChild(input);
+    bubble.querySelector('.bubble-content')?.appendChild(btnContainer);
     input.focus();
 
-    const saveEdit = () => {
+    const cancelBtn = btnContainer.querySelector('.cancel-edit');
+    const saveBtn = btnContainer.querySelector('.save-edit');
+
+    const closeEdit = () => {
+      input.remove();
+      btnContainer.remove();
+      textEl.style.display = 'block';
+      bubble.classList.remove('editing');
+    };
+
+    cancelBtn.addEventListener('click', closeEdit);
+    saveBtn.addEventListener('click', () => {
       const newText = input.value.trim();
-      if (newText && newText !== currentText) {
+      if (newText) {
         msg.text = newText;
         textEl.dataset.rawText = newText;
         textEl.innerHTML = formatMessageText(newText);
         LocalDB.updateMessage(activePersonaId, msg.id, { text: newText });
-        renderContactList(LocalDB.getPersonas());
       }
-      cleanup();
-    };
-
-    const cleanup = () => {
-      bubble.classList.remove('editing');
-      input.remove();
-      actionBox.remove();
-      textEl.style.display = 'block';
-    };
-
-    actionBox.querySelector('.save-edit-btn').addEventListener('click', saveEdit);
-    actionBox.querySelector('.cancel-edit-btn').addEventListener('click', cleanup);
+      closeEdit();
+    });
   }
 
   function toggleReaction(msg, emoji, bubble) {
     msg.reactions = msg.reactions || [];
-    const index = msg.reactions.indexOf(emoji);
-    if (index > -1) {
-      msg.reactions.splice(index, 1);
+    const idx = msg.reactions.indexOf(emoji);
+    if (idx > -1) {
+      msg.reactions.splice(idx, 1);
     } else {
       msg.reactions.push(emoji);
     }
 
+    LocalDB.updateMessage(activePersonaId, msg.id, { reactions: msg.reactions });
+
+    const existingReactionsEl = bubble.querySelector('.message-reactions');
+    if (existingReactionsEl) existingReactionsEl.remove();
+
     if (msg.reactions.length > 0) {
+      const container = bubble.querySelector('.bubble-content') || bubble;
+      container.insertAdjacentHTML('beforeend', renderReactionsHtml(msg.reactions));
       bubble.classList.add('has-reactions');
     } else {
       bubble.classList.remove('has-reactions');
     }
-
-    let reactionsContainer = bubble.querySelector('.message-reactions');
-    const newHtml = renderReactionsHtml(msg.reactions);
-    if (reactionsContainer) {
-      if (newHtml) {
-        reactionsContainer.outerHTML = newHtml;
-      } else {
-        reactionsContainer.remove();
-      }
-    } else if (newHtml) {
-      bubble.insertAdjacentHTML('beforeend', newHtml);
-    }
-
-    LocalDB.updateMessage(activePersonaId, msg.id, { reactions: msg.reactions });
   }
 
   function deleteSingleMessage(msgId, bubble) {
     showConfirmDialog({
       title: 'Delete Message',
-      message: 'Are you sure you want to delete this message? This action cannot be undone.',
-      confirmText: 'Delete Message',
+      message: 'Are you sure you want to delete this message?',
+      confirmText: 'Delete',
       danger: true,
       onConfirm: () => {
         bubble.remove();
@@ -1357,24 +1352,20 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
 
   function showTypingIndicator() {
     removeTypingIndicator();
-    const persona = LocalDB.getPersona(activePersonaId);
     const indicator = document.createElement('div');
     indicator.className = 'message-bubble persona typing-indicator-bubble';
-    indicator.id = 'typing-indicator';
+    indicator.id = 'typing-indicator-bubble';
     indicator.innerHTML = `
-      <img src="${persona?.avatarUrl || './uploads/default-avatar.svg'}" class="bubble-avatar" alt="Avatar">
-      <div class="bubble-content">
-        <div class="typing-dots">
-          <span></span><span></span><span></span>
-        </div>
-      </div>
+      <span class="typing-dot"></span>
+      <span class="typing-dot"></span>
+      <span class="typing-dot"></span>
     `;
     chatFeedEl.appendChild(indicator);
   }
 
   function removeTypingIndicator() {
-    const existing = document.getElementById('typing-indicator');
-    if (existing) existing.remove();
+    const elements = document.querySelectorAll('#typing-indicator-bubble, .typing-indicator-bubble');
+    elements.forEach(el => el.remove());
   }
 
   // -------------------------------------------------------------
@@ -1432,7 +1423,6 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
 
       assistantText = await streamAiCompletion(promptMessages, settings, (chunkText) => {
         if (activePersonaId === personaId) {
-          removeTypingIndicator();
           if (!assistantMsgBubble) {
             const newMsgObj = {
               id: assistantMsgId,
@@ -1441,6 +1431,12 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
               timestamp: new Date().toISOString()
             };
             assistantMsgBubble = appendMessageBubble(newMsgObj);
+            assistantMsgBubble.classList.add('streaming-ghost');
+
+            const typingInd = document.getElementById('typing-indicator-bubble');
+            if (typingInd) {
+              chatFeedEl.insertBefore(assistantMsgBubble, typingInd);
+            }
           } else {
             const textEl = assistantMsgBubble.querySelector('.message-text');
             if (textEl) {
@@ -1481,10 +1477,14 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
       }
     } finally {
       generatingPersonas[personaId] = false;
+      removeTypingIndicator();
+      if (assistantMsgBubble) {
+        assistantMsgBubble.classList.remove('streaming-ghost');
+      }
       if (activePersonaId === personaId) {
-        removeTypingIndicator();
         currentStatusEl.textContent = 'online';
         currentStatusEl.className = 'status-subtitle';
+        scrollToBottom();
       }
       renderContactList(LocalDB.getPersonas());
     }
