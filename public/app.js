@@ -437,7 +437,9 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
       }, () => {});
 
       if (newMemory && newMemory.trim()) {
+        const nowIso = new Date().toISOString();
         LocalDB.updateMemory(persona.id, newMemory.trim());
+        LocalDB.updatePersona(persona.id, { lastMemorySyncTime: nowIso });
       }
     } catch (err) {
       console.warn('Memory auto-summarization skipped:', err.message);
@@ -1742,7 +1744,26 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
     btnViewMemory.addEventListener('click', () => {
       if (!activePersonaId) return;
       const persona = LocalDB.getPersona(activePersonaId);
+      const messages = LocalDB.getMessages(activePersonaId) || [];
       memoryTextarea.value = persona?.storyMemory || '';
+
+      const totalMsgs = messages.length;
+      const remainder = totalMsgs % 6;
+      const turnsRemaining = remainder === 0 ? (totalMsgs > 0 ? 0 : 6) : (6 - remainder);
+
+      const lastSyncEl = document.getElementById('memory-last-sync-time');
+      const turnsLeftEl = document.getElementById('memory-turns-remaining');
+
+      if (lastSyncEl) {
+        lastSyncEl.textContent = persona?.lastMemorySyncTime
+          ? new Date(persona.lastMemorySyncTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', month: 'short', day: 'numeric' })
+          : (totalMsgs >= 6 ? 'Initial auto-sync' : 'Never');
+      }
+
+      if (turnsLeftEl) {
+        turnsLeftEl.textContent = turnsRemaining === 0 ? 'Syncing on next turn' : `${turnsRemaining} turn${turnsRemaining === 1 ? '' : 's'} left`;
+      }
+
       showModal(memoryModal);
     });
   }
