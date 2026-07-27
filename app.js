@@ -1130,19 +1130,68 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
     renderChatFeed(personaId);
   }
 
-  function renderChatFeed(personaId) {
-    chatFeedEl.innerHTML = '';
-    const messages = LocalDB.getMessages(personaId);
+  const MESSAGE_BATCH_SIZE = 30;
+  let activeMessagesList = [];
+  let displayedMessageCount = 30;
 
-    messages.forEach(msg => {
+  function renderChatFeed(personaId) {
+    activeMessagesList = LocalDB.getMessages(personaId) || [];
+    displayedMessageCount = Math.min(MESSAGE_BATCH_SIZE, activeMessagesList.length);
+    renderCurrentMessageBatch();
+    scrollToBottom();
+  }
+
+  function renderCurrentMessageBatch(keepScrollPosition = false) {
+    const oldScrollHeight = chatFeedEl.scrollHeight;
+    const oldScrollTop = chatFeedEl.scrollTop;
+
+    chatFeedEl.innerHTML = '';
+
+    const hasMoreOlder = activeMessagesList.length > displayedMessageCount;
+    if (hasMoreOlder) {
+      const remainingCount = activeMessagesList.length - displayedMessageCount;
+      const loadBanner = document.createElement('div');
+      loadBanner.id = 'load-older-messages-banner';
+      loadBanner.style.cssText = 'text-align: center; padding: 10px 0; margin: 8px 0; font-size: 12px; color: var(--accent-green); cursor: pointer; user-select: none; font-weight: 500; transition: opacity 0.2s ease;';
+      loadBanner.innerHTML = `<i class="fa-solid fa-clock-rotate-left"></i> Load older messages (${remainingCount} remaining)`;
+      loadBanner.addEventListener('click', loadOlderMessages);
+      chatFeedEl.appendChild(loadBanner);
+    }
+
+    const startIndex = Math.max(0, activeMessagesList.length - displayedMessageCount);
+    const visibleMessages = activeMessagesList.slice(startIndex);
+
+    visibleMessages.forEach(msg => {
       appendMessageBubble(msg);
     });
 
-    if (generatingPersonas[personaId]) {
+    if (generatingPersonas[activePersonaId]) {
       showTypingIndicator();
     }
 
-    scrollToBottom();
+    if (keepScrollPosition) {
+      const newScrollHeight = chatFeedEl.scrollHeight;
+      chatFeedEl.scrollTop = oldScrollTop + (newScrollHeight - oldScrollHeight);
+    }
+  }
+
+  function loadOlderMessages() {
+    if (displayedMessageCount >= activeMessagesList.length) return;
+    displayedMessageCount = Math.min(displayedMessageCount + MESSAGE_BATCH_SIZE, activeMessagesList.length);
+    renderCurrentMessageBatch(true);
+  }
+
+  let isScrollLoading = false;
+  if (chatFeedEl) {
+    chatFeedEl.addEventListener('scroll', () => {
+      if (chatFeedEl.scrollTop <= 60 && displayedMessageCount < activeMessagesList.length) {
+        if (!isScrollLoading) {
+          isScrollLoading = true;
+          loadOlderMessages();
+          setTimeout(() => { isScrollLoading = false; }, 300);
+        }
+      }
+    });
   }
 
   function scrollToBottom() {
