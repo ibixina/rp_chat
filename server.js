@@ -96,7 +96,27 @@ function estimateTokens(text) {
 }
 
 function estimateMessagesTokens(messages) {
-  return messages.reduce((sum, m) => sum + estimateTokens(m.content) + 4, 0);
+  return messages.reduce((sum, m) => sum + estimateTokens(typeof m.content === "string" ? m.content : (m.content?.[0]?.text || "")) + 4, 0);
+}
+
+// OpenRouter Prompt Caching Helper (attaches cache_control to initial system prompt)
+function prepareOpenRouterMessages(messages) {
+  if (!Array.isArray(messages) || messages.length === 0) return messages;
+  return messages.map((m, idx) => {
+    if (idx === 0 && m.role === "system" && typeof m.content === "string") {
+      return {
+        role: "system",
+        content: [
+          {
+            type: "text",
+            text: m.content,
+            cache_control: { type: "ephemeral" },
+          },
+        ],
+      };
+    }
+    return m;
+  });
 }
 
 // Shared SSE stream handler
@@ -138,27 +158,39 @@ async function handleAiStream(
         ? settings.repetitionPenalty
         : 1.18;
 
+    let finalMessages = promptMessages;
     const reqOptions = {
       model,
-      messages: promptMessages,
       temperature,
       frequency_penalty: freqPen,
       presence_penalty: presPen,
       max_tokens: maxTokens,
       stream: true,
     };
+
     if (provider === "openrouter") {
+      finalMessages = prepareOpenRouterMessages(promptMessages);
+      reqOptions.stream_options = { include_usage: true };
       reqOptions.extra_body = {
         provider: { sort: "latency", allow_fallbacks: true },
         repetition_penalty: repPen,
+        session_id: `persona-${personaId}`,
       };
     } else if (provider === "deepinfra") {
       reqOptions.extra_body = { repetition_penalty: repPen };
     }
+    reqOptions.messages = finalMessages;
 
     const stream = await client.chat.completions.create(reqOptions);
 
     for await (const chunk of stream) {
+      if (chunk.usage) {
+        const cached = chunk.usage.prompt_tokens_details?.cached_tokens || chunk.usage.native_tokens_prompt_cached || 0;
+        logEvent(
+          "Stream",
+          `Usage for "${persona.name}": ${chunk.usage.prompt_tokens} prompt (${cached} cached), ${chunk.usage.completion_tokens} completion tokens`,
+        );
+      }
       const content = chunk.choices[0]?.delta?.content || "";
       if (content) {
         if (!firstTokenTime) {
@@ -763,12 +795,22 @@ Please produce the updated, structured Story Memory Log:`,
       `Running memory summarization via ${provider}/${model} for "${persona.name}"...`,
     );
     const memoryBudget = db.getSettings().memoryBudget || 5000;
-    const response = await client.chat.completions.create({
+
+    let finalSummaryPrompt = summaryPrompt;
+    const reqBody = {
       model: model,
-      messages: summaryPrompt,
       temperature: 0.3,
       max_tokens: memoryBudget,
-    });
+    };
+    if (provider === "openrouter") {
+      finalSummaryPrompt = prepareOpenRouterMessages(summaryPrompt);
+      reqBody.extra_body = {
+        session_id: `memory-${personaId}`,
+      };
+    }
+    reqBody.messages = finalSummaryPrompt;
+
+    const response = await client.chat.completions.create(reqBody);
 
     const newMemory = response.choices[0]?.message?.content;
     if (newMemory && newMemory.trim()) {
