@@ -338,7 +338,7 @@ ${persona.storyMemory || "No prior narrative memory recorded."}
     return [{ role: 'system', content: sysPrompt }, ...formattedMessages];
   }
 
-  async function streamAiCompletion(promptMessages, settings, onChunk) {
+  async function streamAiCompletion(promptMessages, settings, onChunk, isRetry = false) {
     const provider = (settings.provider || 'openrouter').toLowerCase();
     const model = settings.model || (provider === 'deepinfra' ? 'NousResearch/Hermes-3-Llama-3.1-70B' : 'sao10k/l3.3-euryale-70b');
     
@@ -452,12 +452,17 @@ ${persona.storyMemory || "No prior narrative memory recorded."}
       }
     }
 
-    if (!fullText) {
-      logEvent('AI_INFERENCE', 'Warning: Provider returned 0 characters', { provider, model });
-    } else {
-      logEvent('AI_INFERENCE', 'Stream completion finished successfully', { totalCharacters: fullText.length });
+    if (!fullText || !fullText.trim()) {
+      logEvent('AI_INFERENCE', `Warning: Provider returned 0 characters${isRetry ? ' (after auto-retry)' : ''}`, { provider, model });
+      if (!isRetry) {
+        logEvent('AI_INFERENCE', 'Auto-retrying stream completion (attempt 2/2)...', { provider, model });
+        await new Promise(resolve => setTimeout(resolve, 800));
+        return streamAiCompletion(promptMessages, settings, onChunk, true);
+      }
+      throw new Error('AI model returned an empty (0 character) response.');
     }
 
+    logEvent('AI_INFERENCE', 'Stream completion finished successfully', { totalCharacters: fullText.length });
     return fullText;
   }
 
@@ -1351,9 +1356,21 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
       statusIcon = `<i class="fa-solid ${checkClass} msg-status-check" style="${isRead}"></i>`;
     }
 
+    let errorRetryHtml = '';
+    if (msg.isError || (msg.id && msg.id.startsWith('err-'))) {
+      errorRetryHtml = `
+        <div style="margin-top: 10px;">
+          <button class="btn-retry-error-msg" style="background: rgba(239, 68, 68, 0.25); border: 1px solid rgba(239, 68, 68, 0.5); color: #f87171; padding: 5px 14px; border-radius: 6px; font-size: 12px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; font-weight: 600;">
+            <i class="fa-solid fa-rotate-right"></i> Retry Response
+          </button>
+        </div>
+      `;
+    }
+
     bubble.innerHTML = `
       <div class="bubble-content">
         <div class="message-text" data-raw-text="${escapeHtml(msg.text)}" title="Double-click to edit text">${formatMessageText(msg.text)}</div>
+        ${errorRetryHtml}
       </div>
       ${renderReactionsHtml(msg.reactions)}
       <div class="message-meta">
@@ -1381,6 +1398,15 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
         </button>
       </div>
     `;
+
+    const errorRetryBtn = bubble.querySelector('.btn-retry-error-msg');
+    if (errorRetryBtn) {
+      errorRetryBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        bubble.remove();
+        generatePersonaResponse(activePersonaId);
+      });
+    }
 
     // Reactions
     const reactionBtns = bubble.querySelectorAll('.emoji-btn');
