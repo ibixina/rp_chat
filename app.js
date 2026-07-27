@@ -954,6 +954,12 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
     document.getElementById('settings-context-budget').value = settings.contextBudget || 6000;
     document.getElementById('context-budget-display').textContent = settings.contextBudget || 6000;
 
+    const memBudget = settings.memoryBudget || 5000;
+    const memBudgetInputEl = document.getElementById('settings-memory-budget');
+    const memBudgetDisplayEl = document.getElementById('memory-budget-display');
+    if (memBudgetInputEl) memBudgetInputEl.value = memBudget;
+    if (memBudgetDisplayEl) memBudgetDisplayEl.textContent = memBudget;
+
     const memProv = settings.memoryProvider || 'inherit';
     const cardMemInherit = document.getElementById('card-mem-inherit');
     const cardMemOpenRouter = document.getElementById('card-mem-openrouter');
@@ -1060,6 +1066,9 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
 
   const ctxInput = document.getElementById('settings-context-budget');
   if (ctxInput) ctxInput.addEventListener('input', (e) => document.getElementById('context-budget-display').textContent = e.target.value);
+
+  const memBudgetSlider = document.getElementById('settings-memory-budget');
+  if (memBudgetSlider) memBudgetSlider.addEventListener('input', (e) => document.getElementById('memory-budget-display').textContent = e.target.value);
 
   // Settings Save Listener
   if (btnSaveSettings) {
