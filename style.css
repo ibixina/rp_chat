@@ -190,15 +190,25 @@ body, html {
   background-color: #2a3942;
 }
 
-.contact-avatar {
+.contact-avatar, .contact-item .avatar-wrapper img {
   width: 48px;
   height: 48px;
+  min-width: 48px;
+  min-height: 48px;
   border-radius: 50%;
   object-fit: cover;
   background-color: #2a3942;
 }
 
-.contact-details {
+.avatar-wrapper {
+  position: relative;
+  width: 48px;
+  height: 48px;
+  min-width: 48px;
+  flex-shrink: 0;
+}
+
+.contact-details, .contact-info {
   flex: 1;
   overflow: hidden;
 }
@@ -893,6 +903,15 @@ body, html {
   border-radius: 4px;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.message-text img {
+  max-width: 100%;
+  max-height: 400px;
+  border-radius: 8px;
+  margin: 8px 0;
+  display: block;
+  object-fit: contain;
 }
 
 .message-text:hover {

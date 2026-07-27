@@ -999,6 +999,9 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
   // -------------------------------------------------------------
   // UI Rendering: Contact List
   // -------------------------------------------------------------
+  // -------------------------------------------------------------
+  // UI Rendering: Contact List
+  // -------------------------------------------------------------
   function renderContactList(list) {
     contactListEl.innerHTML = '';
 
@@ -1017,15 +1020,15 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
 
       item.innerHTML = `
         <div class="avatar-wrapper">
-          <img src="${p.avatarUrl || './uploads/default-avatar.svg'}" alt="${p.name}">
+          <img src="${p.avatarUrl || './uploads/default-avatar.svg'}" alt="${escapeHtml(p.name)}" class="contact-avatar">
           <span class="online-badge"></span>
         </div>
-        <div class="contact-info">
-          <div class="contact-row-top">
-            <span class="contact-name">${p.name}</span>
+        <div class="contact-details">
+          <div class="contact-top-row">
+            <span class="contact-name">${escapeHtml(p.name)}</span>
             <span class="contact-time">${p.lastMessageTime || ''}</span>
           </div>
-          <div class="contact-preview ${isTyping ? 'typing' : ''}">
+          <div class="contact-snippet ${isTyping ? 'typing' : ''}">
             ${isTyping ? '<i class="fa-solid fa-pen-nib"></i> typing...' : escapeHtml(p.lastMessageText || p.description)}
           </div>
         </div>
@@ -1097,8 +1100,14 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
   function formatMessageText(text) {
     if (!text) return '';
     let escaped = escapeHtml(text);
-    // Replace *text* or * action * with italics markdown formatting for roleplay actions
-    escaped = escaped.replace(/\*([^*]+)\*/g, '<em class="action-text">* $1 *</em>');
+
+    // Markdown images ![alt](url)
+    escaped = escaped.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (match, alt, url) => {
+      return `<img src="${url}" alt="${alt}">`;
+    });
+
+    // Action text *action* -> <span class="message-action">$1</span>
+    escaped = escaped.replace(/\*([^*]+)\*/g, '<span class="message-action">$1</span>');
     escaped = escaped.replace(/\n/g, '<br>');
     return escaped;
   }
@@ -1111,8 +1120,8 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
     return `
       <div class="message-reactions">
         ${Object.entries(counts).map(([emoji, count]) => `
-          <span class="reaction-pill">
-            <span class="reaction-emoji">${emoji}</span>
+          <span class="reaction-badge">
+            <span>${emoji}</span>
             ${count > 1 ? `<span class="reaction-count">${count}</span>` : ''}
           </span>
         `).join('')}
@@ -1143,31 +1152,29 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
         ${renderReactionsHtml(msg.reactions)}
       </div>
 
-      <div class="message-actions-menu">
-        <div class="reaction-picker">
-          <button class="reaction-btn" data-emoji="❤️">❤️</button>
-          <button class="reaction-btn" data-emoji="🔥">🔥</button>
-          <button class="reaction-btn" data-emoji="😮">😮</button>
-          <button class="reaction-btn" data-emoji="😂">😂</button>
-          <button class="reaction-btn" data-emoji="🥺">🥺</button>
-        </div>
-        <div class="actions-divider"></div>
+      <div class="message-actions-toolbar">
+        <button class="emoji-btn" data-emoji="❤️">❤️</button>
+        <button class="emoji-btn" data-emoji="🔥">🔥</button>
+        <button class="emoji-btn" data-emoji="😮">😮</button>
+        <button class="emoji-btn" data-emoji="😂">😂</button>
+        <button class="emoji-btn" data-emoji="🥺">🥺</button>
+        <div class="toolbar-divider"></div>
         ${isPersona ? `
-          <button class="action-item-btn continue-btn" title="Continue persona generation">
-            <i class="fa-solid fa-play"></i> Continue
+          <button class="action-btn continue-btn" title="Continue persona generation">
+            <i class="fa-solid fa-play"></i>
           </button>
-          <button class="action-item-btn retry-btn" title="Regenerate this turn">
-            <i class="fa-solid fa-rotate"></i> Retry
+          <button class="action-btn retry-btn" title="Regenerate this turn">
+            <i class="fa-solid fa-rotate"></i>
           </button>
         ` : ''}
-        <button class="action-item-btn delete-btn" title="Delete message">
-          <i class="fa-solid fa-trash"></i> Delete
+        <button class="action-btn delete-btn" title="Delete message">
+          <i class="fa-solid fa-trash"></i>
         </button>
       </div>
     `;
 
     // Reactions
-    const reactionBtns = bubble.querySelectorAll('.reaction-btn');
+    const reactionBtns = bubble.querySelectorAll('.emoji-btn');
     reactionBtns.forEach(btn => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
