@@ -266,7 +266,7 @@ app.use(cors());
 app.use(express.json({ limit: "50kb" }));
 app.use(express.urlencoded({ extended: true, limit: "50kb" }));
 app.use(
-  express.static(path.join(__dirname, "public"), { maxAge: 0, etag: false }),
+  express.static(__dirname, { maxAge: 0, etag: false }),
 );
 
 // Request Logging Middleware
