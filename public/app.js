@@ -407,10 +407,10 @@ ${persona.storyMemory || "No prior narrative memory recorded."}
 
         try {
           const parsed = JSON.parse(dataStr);
-          const chunk = parsed.choices?.[0]?.delta?.content || '';
+          const chunk = parsed.choices?.[0]?.delta?.content || parsed.choices?.[0]?.text || parsed.choices?.[0]?.message?.content || '';
           if (chunk) {
             fullText += chunk;
-            onChunk(chunk);
+            if (onChunk) onChunk(chunk);
           }
         } catch (e) {
           // ignore stream chunk parse errors
@@ -418,7 +418,29 @@ ${persona.storyMemory || "No prior narrative memory recorded."}
       }
     }
 
-    logEvent('AI_INFERENCE', `Stream completion finished successfully`, { totalCharacters: fullText.length });
+    if (buffer.trim()) {
+      const trimmed = buffer.trim();
+      if (trimmed.startsWith('data: ')) {
+        const dataStr = trimmed.slice(6);
+        if (dataStr !== '[DONE]') {
+          try {
+            const parsed = JSON.parse(dataStr);
+            const chunk = parsed.choices?.[0]?.delta?.content || parsed.choices?.[0]?.text || parsed.choices?.[0]?.message?.content || '';
+            if (chunk) {
+              fullText += chunk;
+              if (onChunk) onChunk(chunk);
+            }
+          } catch (e) {}
+        }
+      }
+    }
+
+    if (!fullText) {
+      logEvent('AI_INFERENCE', 'Warning: Provider returned 0 characters', { provider, model });
+    } else {
+      logEvent('AI_INFERENCE', 'Stream completion finished successfully', { totalCharacters: fullText.length });
+    }
+
     return fullText;
   }
 
