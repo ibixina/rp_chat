@@ -1455,6 +1455,25 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
       return;
     }
 
+    // Mark user messages as read (double blue checkmark)
+    const activeMsgs = LocalDB.getMessages(personaId);
+    activeMsgs.forEach(m => {
+      if (m.sender === 'user' && !m.isRead) {
+        m.isRead = true;
+        LocalDB.updateMessage(personaId, m.id, { isRead: true });
+        if (activePersonaId === personaId) {
+          const userBubble = document.getElementById(m.id);
+          if (userBubble) {
+            const checkIcon = userBubble.querySelector('.msg-status-check');
+            if (checkIcon) {
+              checkIcon.className = 'fa-solid fa-check-double msg-status-check';
+              checkIcon.style.color = '#53bdeb';
+            }
+          }
+        }
+      }
+    });
+
     if (activePersonaId === personaId) {
       showTypingIndicator();
       currentStatusEl.textContent = 'typing...';
