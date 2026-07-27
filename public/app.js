@@ -1619,8 +1619,11 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
       LocalDB.addMessage(personaId, finalAssistantMsg);
 
       const allMsgs = LocalDB.getMessages(personaId);
-      if (allMsgs.length % 6 === 0) {
+      const remainder = allMsgs.length % 6;
+      if (remainder === 0) {
         triggerMemorySummarization(persona, allMsgs, settings);
+      } else {
+        logEvent('MEMORY', `Turn ${allMsgs.length} completed. Next auto-summarization in ${6 - remainder} turn(s).`);
       }
 
     } catch (err) {
