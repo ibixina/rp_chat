@@ -365,7 +365,7 @@ ${persona.storyMemory || "No prior narrative memory recorded."}
       })
     };
 
-    logEvent('AI_INFERENCE', `Sending stream completion request via ${provider.toUpperCase()}`, { model, temperature, messageCount: promptMessages.length });
+    logEvent('AI_INFERENCE', `Sending stream completion request via ${provider.toUpperCase()}`, { model, temperature: payload.temperature, messageCount: promptMessages.length });
 
     const response = await fetch(endpoint, {
       method: 'POST',
