@@ -38,25 +38,63 @@ const defaultData = {
   }
 };
 
-// In-memory cache — read from disk once, write-back asynchronously
+// In-memory cache & fast indexes
 let cachedDB = null;
+let cachedPersonaSummaries = null;
 let writeTimer = null;
 const WRITE_DEBOUNCE_MS = 500;
 
-function readDB() {
-  if (cachedDB) return cachedDB;
+function formatPersonaSummary(p, db) {
+  const msgs = db.messages[p.id] || [];
+  const lastMsg = msgs[msgs.length - 1];
+  const rawTs = lastMsg && lastMsg.timestamp ? new Date(lastMsg.timestamp).getTime() : (p.createdAt ? new Date(p.createdAt).getTime() : 0);
+  const lastTimestamp = isNaN(rawTs) ? 0 : rawTs;
+  const timeStr = lastMsg && lastMsg.timestamp && !isNaN(rawTs) 
+    ? new Date(lastMsg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) 
+    : '';
+  return {
+    ...p,
+    lastTimestamp,
+    lastMessageText: lastMsg ? lastMsg.text : (p.firstMessage || p.description),
+    lastMessageTime: timeStr
+  };
+}
+
+function rebuildPersonaSummaries() {
+  if (!cachedDB) return;
+  const personas = cachedDB.personas || [];
+  cachedPersonaSummaries = personas
+    .map(p => formatPersonaSummary(p, cachedDB))
+    .sort((a, b) => (b.lastTimestamp || 0) - (a.lastTimestamp || 0));
+}
+
+let lastReadMtime = 0;
+
+function readDB(force = false) {
   try {
+    if (writeTimer) {
+      flushSync();
+    }
     if (!fs.existsSync(DB_FILE)) {
       cachedDB = JSON.parse(JSON.stringify(defaultData));
       flushSync();
+      rebuildPersonaSummaries();
       return cachedDB;
     }
-    const raw = fs.readFileSync(DB_FILE, 'utf8');
-    cachedDB = JSON.parse(raw);
+    const stat = fs.statSync(DB_FILE);
+    if (!cachedDB || force || stat.mtimeMs > lastReadMtime) {
+      const raw = fs.readFileSync(DB_FILE, 'utf8');
+      cachedDB = JSON.parse(raw);
+      lastReadMtime = stat.mtimeMs;
+      rebuildPersonaSummaries();
+    }
     return cachedDB;
   } catch (err) {
     console.error('Error reading DB file, returning default:', err);
-    cachedDB = JSON.parse(JSON.stringify(defaultData));
+    if (!cachedDB) {
+      cachedDB = JSON.parse(JSON.stringify(defaultData));
+      rebuildPersonaSummaries();
+    }
     return cachedDB;
   }
 }
@@ -64,18 +102,23 @@ function readDB() {
 function scheduleDiskWrite() {
   if (writeTimer) clearTimeout(writeTimer);
   writeTimer = setTimeout(() => {
-    if (!cachedDB) return;
-    fs.writeFile(DB_FILE, JSON.stringify(cachedDB, null, 2), 'utf8', (err) => {
-      if (err) console.error('Error writing DB file:', err);
-    });
+    writeTimer = null;
+    flushSync();
   }, WRITE_DEBOUNCE_MS);
 }
 
 // Synchronous flush for startup/shutdown
 function flushSync() {
   if (!cachedDB) return;
+  if (writeTimer) {
+    clearTimeout(writeTimer);
+    writeTimer = null;
+  }
   try {
     fs.writeFileSync(DB_FILE, JSON.stringify(cachedDB, null, 2), 'utf8');
+    if (fs.existsSync(DB_FILE)) {
+      lastReadMtime = fs.statSync(DB_FILE).mtimeMs;
+    }
   } catch (err) {
     console.error('Error writing DB file:', err);
   }
@@ -86,26 +129,14 @@ process.on('exit', flushSync);
 process.on('SIGINT', () => { flushSync(); process.exit(); });
 process.on('SIGTERM', () => { flushSync(); process.exit(); });
 
-// Initialize cache at module load
+// Initialize cache & indexes at module load
 readDB();
 
 module.exports = {
   getPersonas() {
-    const db = readDB();
-    const personas = db.personas || [];
-    return personas.map(p => {
-      const msgs = db.messages[p.id] || [];
-      const lastMsg = msgs[msgs.length - 1];
-      const rawTs = lastMsg && lastMsg.timestamp ? new Date(lastMsg.timestamp).getTime() : (p.createdAt ? new Date(p.createdAt).getTime() : 0);
-      const lastTimestamp = isNaN(rawTs) ? 0 : rawTs;
-      const timeStr = lastMsg && lastMsg.timestamp && !isNaN(rawTs) ? new Date(lastMsg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
-      return {
-        ...p,
-        lastTimestamp,
-        lastMessageText: lastMsg ? lastMsg.text : (p.firstMessage || p.description),
-        lastMessageTime: timeStr
-      };
-    }).sort((a, b) => (b.lastTimestamp || 0) - (a.lastTimestamp || 0));
+    readDB();
+    if (!cachedPersonaSummaries) rebuildPersonaSummaries();
+    return cachedPersonaSummaries;
   },
 
   getPersona(id) {
@@ -121,10 +152,8 @@ module.exports = {
       db.personas[existingIndex] = { ...db.personas[existingIndex], ...persona };
     } else {
       db.personas.push(persona);
-      // Initialize empty messages if new persona
       if (!db.messages[persona.id]) {
         db.messages[persona.id] = [];
-        // Add initial greeting message if provided
         if (persona.firstMessage) {
           db.messages[persona.id].push({
             id: `msg-${Date.now()}`,
@@ -135,6 +164,7 @@ module.exports = {
         }
       }
     }
+    rebuildPersonaSummaries();
     scheduleDiskWrite();
     return persona;
   },
@@ -143,6 +173,7 @@ module.exports = {
     const db = readDB();
     db.personas = db.personas.filter(p => p.id !== id);
     delete db.messages[id];
+    rebuildPersonaSummaries();
     scheduleDiskWrite();
   },
 
@@ -158,26 +189,26 @@ module.exports = {
     }
     const newMsg = {
       id: message.id || `msg-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-      sender: message.sender, // 'user' or 'persona'
+      sender: message.sender,
       text: message.text,
       timestamp: message.timestamp || new Date().toISOString()
     };
     db.messages[personaId].push(newMsg);
+    rebuildPersonaSummaries();
     scheduleDiskWrite();
     return newMsg;
   },
 
-  // Bulk-set messages for a persona (used by import)
   setMessages(personaId, messages) {
     const db = readDB();
     db.messages[personaId] = messages;
+    rebuildPersonaSummaries();
     scheduleDiskWrite();
   },
 
   clearMessages(personaId) {
     const db = readDB();
     db.messages[personaId] = [];
-    // Restore greeting if present
     const persona = db.personas.find(p => p.id === personaId);
     if (persona && persona.firstMessage) {
       db.messages[personaId].push({
@@ -187,6 +218,7 @@ module.exports = {
         timestamp: new Date().toISOString()
       });
     }
+    rebuildPersonaSummaries();
     scheduleDiskWrite();
     return db.messages[personaId];
   },
@@ -198,6 +230,7 @@ module.exports = {
       if (msg) {
         if (updates.text !== undefined) msg.text = updates.text;
         if (updates.reactions !== undefined) msg.reactions = updates.reactions;
+        rebuildPersonaSummaries();
         scheduleDiskWrite();
         return msg;
       }
@@ -209,6 +242,7 @@ module.exports = {
     const db = readDB();
     if (db.messages[personaId]) {
       db.messages[personaId] = db.messages[personaId].filter(m => m.id !== msgId);
+      rebuildPersonaSummaries();
       scheduleDiskWrite();
       return true;
     }
@@ -223,33 +257,40 @@ module.exports = {
     if (index !== -1) {
       const target = msgs[index];
       if (target.sender === 'persona') {
-        // Remove target persona message and any subsequent messages
         db.messages[personaId] = msgs.slice(0, index);
       } else if (target.sender === 'user') {
-        // Keep target user message, remove subsequent persona responses
         db.messages[personaId] = msgs.slice(0, index + 1);
       }
+      rebuildPersonaSummaries();
       scheduleDiskWrite();
     }
   },
 
-  updateMemory(personaId, memoryText) {
+  updateMemory(personaId, memoryText, msgCount) {
     const db = readDB();
     const persona = db.personas.find(p => p.id === personaId);
     if (persona) {
       persona.storyMemory = memoryText;
-      scheduleDiskWrite();
+      if (msgCount !== undefined) persona.lastMemoryMsgCount = msgCount;
+      flushSync();
     }
   },
 
   getSettings() {
     const db = readDB();
-    return db.settings || {
+    const defaults = {
       provider: 'openrouter',
       model: 'sao10k/l3.3-euryale-70b',
       temperature: 0.68,
-      contextBudget: 6000
+      frequencyPenalty: 0.65,
+      presencePenalty: 0.45,
+      repetitionPenalty: 1.18,
+      contextBudget: 6000,
+      memoryBudget: 5000,
+      memoryProvider: 'inherit',
+      memoryModel: 'nvidia/nemotron-3-ultra-550b-a55b:free'
     };
+    return { ...defaults, ...(db.settings || {}) };
   },
 
   saveSettings(settings) {
@@ -257,10 +298,16 @@ module.exports = {
     db.settings = {
       provider: settings.provider || 'openrouter',
       model: settings.model || 'sao10k/l3.3-euryale-70b',
-      temperature: settings.temperature ? parseFloat(settings.temperature) : 0.68,
-      contextBudget: settings.contextBudget ? parseInt(settings.contextBudget, 10) : 6000
+      temperature: settings.temperature !== undefined ? parseFloat(settings.temperature) : 0.68,
+      frequencyPenalty: settings.frequencyPenalty !== undefined ? parseFloat(settings.frequencyPenalty) : 0.65,
+      presencePenalty: settings.presencePenalty !== undefined ? parseFloat(settings.presencePenalty) : 0.45,
+      repetitionPenalty: settings.repetitionPenalty !== undefined ? parseFloat(settings.repetitionPenalty) : 1.18,
+      contextBudget: settings.contextBudget ? parseInt(settings.contextBudget, 10) : 6000,
+      memoryBudget: settings.memoryBudget ? parseInt(settings.memoryBudget, 10) : 5000,
+      memoryProvider: settings.memoryProvider || 'inherit',
+      memoryModel: settings.memoryModel || 'nvidia/nemotron-3-ultra-550b-a55b:free'
     };
-    scheduleDiskWrite();
+    flushSync();
     return db.settings;
   }
 };

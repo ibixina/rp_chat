@@ -72,7 +72,7 @@
             </button>
             <div class="avatar-wrapper">
               <img src="/uploads/default-avatar.svg" alt="Avatar" class="header-avatar" id="current-avatar">
-              <span class="online-badge" title="Online"></span>
+              <span class="online-badge" id="header-online-badge" title="Online"></span>
             </div>
             <div class="contact-title-box">
               <h3 id="current-name">Persona Name</h3>
@@ -80,11 +80,17 @@
             </div>
           </div>
           <div class="chat-header-actions">
+            <button id="btn-export-chat" class="icon-btn" title="Export Chat JSON">
+              <i class="fa-solid fa-file-export"></i>
+            </button>
             <button id="btn-view-memory" class="icon-btn" title="View Story Memory Log">
               <i class="fa-solid fa-brain"></i>
             </button>
             <button id="btn-edit-persona" class="icon-btn" title="Edit Contact Details">
               <i class="fa-solid fa-pen-to-square"></i>
+            </button>
+            <button id="btn-delete-persona-header" class="icon-btn" title="Delete Contact">
+              <i class="fa-solid fa-user-xmark"></i>
             </button>
             <button id="btn-clear-chat" class="icon-btn" title="Clear Chat History">
               <i class="fa-solid fa-trash-can"></i>
@@ -155,10 +161,43 @@
         </div>
 
         <div class="modal-footer">
+          <button type="button" class="btn btn-danger hidden" id="btn-delete-persona" style="margin-right: auto; background-color: #ea4335; color: #ffffff;">
+            <i class="fa-solid fa-user-xmark"></i> Delete Contact
+          </button>
+          <button type="button" class="btn btn-secondary hidden" id="btn-export-persona-modal">
+            <i class="fa-solid fa-file-export"></i> Export Chat JSON
+          </button>
           <button type="button" class="btn btn-secondary" id="btn-cancel-modal">Cancel</button>
           <button type="submit" class="btn btn-primary">Save Contact</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- MODAL: AVATAR IMAGE CROP & ZOOM -->
+  <div class="modal-overlay hidden" id="avatar-crop-modal" style="z-index: 1100;">
+    <div class="modal-card crop-modal-card">
+      <div class="modal-header">
+        <h3><i class="fa-solid fa-crop-simple"></i> Adjust Profile Picture</h3>
+        <button type="button" id="btn-close-crop-modal" class="close-btn">&times;</button>
+      </div>
+      <div class="modal-body crop-modal-body">
+        <div class="crop-viewport" id="crop-viewport">
+          <img id="crop-image" src="" alt="Crop Target" draggable="false">
+          <div class="crop-overlay"></div>
+        </div>
+        <div class="crop-controls">
+          <span class="zoom-icon"><i class="fa-solid fa-magnifying-glass-minus"></i></span>
+          <input type="range" id="crop-zoom-slider" min="1" max="4" step="0.01" value="1">
+          <span class="zoom-icon"><i class="fa-solid fa-magnifying-glass-plus"></i></span>
+        </div>
+        <p class="crop-hint"><i class="fa-solid fa-hand-pointer"></i> Drag image to position &bull; Scroll or slider to zoom</p>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" id="btn-reset-crop"><i class="fa-solid fa-rotate-left"></i> Reset</button>
+        <button type="button" class="btn btn-secondary" id="btn-cancel-crop">Cancel</button>
+        <button type="button" class="btn btn-primary" id="btn-apply-crop"><i class="fa-solid fa-check"></i> Apply</button>
+      </div>
     </div>
   </div>
 
@@ -209,6 +248,7 @@
         <div class="form-group">
           <label for="settings-model-preset">Model Engine Selection</label>
           <select id="settings-model-preset" class="form-control" style="margin-bottom: 8px;">
+            <option value="nvidia/nemotron-3-ultra-550b-a55b:free">OpenRouter: nvidia/nemotron-3-ultra-550b-a55b:free (Free 550B)</option>
             <option value="sao10k/l3.3-euryale-70b">OpenRouter: sao10k/l3.3-euryale-70b (Unrestricted RP)</option>
             <option value="meta-llama/llama-3.3-70b-instruct">OpenRouter: meta-llama/llama-3.3-70b-instruct (Fast 70B)</option>
             <option value="gryphe/mythomax-l2-13b">OpenRouter: gryphe/mythomax-l2-13b (Classic RP)</option>
@@ -226,14 +266,89 @@
         </div>
 
         <div class="form-group">
+          <label for="settings-freq-penalty">Frequency Penalty: <span id="freq-penalty-display" style="color: var(--accent-green); font-weight: 600;">0.65</span></label>
+          <input type="range" id="settings-freq-penalty" min="0.00" max="2.00" step="0.05" value="0.65" style="width: 100%; cursor: pointer;">
+          <span style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">Penalizes words based on their frequency to prevent repeating verbatim phrases.</span>
+        </div>
+
+        <div class="form-group">
+          <label for="settings-presence-penalty">Presence Penalty: <span id="presence-penalty-display" style="color: var(--accent-green); font-weight: 600;">0.45</span></label>
+          <input type="range" id="settings-presence-penalty" min="0.00" max="2.00" step="0.05" value="0.45" style="width: 100%; cursor: pointer;">
+          <span style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">Encourages the AI to introduce new vocabulary, ideas, and physical actions.</span>
+        </div>
+
+        <div class="form-group">
+          <label for="settings-rep-penalty">Repetition Penalty: <span id="rep-penalty-display" style="color: var(--accent-green); font-weight: 600;">1.18</span></label>
+          <input type="range" id="settings-rep-penalty" min="1.00" max="2.00" step="0.02" value="1.18" style="width: 100%; cursor: pointer;">
+          <span style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">Prevents looping dialogue and sentence re-use during generation.</span>
+        </div>
+
+        <div class="form-group">
           <label for="settings-context-budget">Context Budget: <span id="context-budget-display" style="color: var(--accent-green); font-weight: 600;">6000</span> tokens</label>
           <input type="range" id="settings-context-budget" min="2000" max="12000" step="500" value="6000" style="width: 100%; cursor: pointer;">
           <span style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">How many tokens of message history to include. Lower = cheaper, higher = more context. Memory covers older events.</span>
+        </div>
+
+        <!-- Dedicated Memory Summarization Route -->
+        <div style="border-top: 1px solid var(--border-color); margin: 18px 0 14px 0; padding-top: 14px;">
+          <label style="font-weight: 600; font-size: 13px; color: var(--accent-green); display: flex; align-items: center; gap: 6px; margin-bottom: 8px;">
+            <i class="fa-solid fa-brain"></i> Memory Summarization Engine
+          </label>
+          <div class="form-group" style="margin-bottom: 12px;">
+            <label style="font-size: 12px; color: var(--text-muted);">Summarization Route</label>
+            <div class="provider-options-grid" style="grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 4px;">
+              <div class="provider-card active" id="card-mem-inherit" style="padding: 10px; text-align: center; cursor: pointer;">
+                <div class="provider-title" style="font-size: 12px;"><i class="fa-solid fa-link"></i> Same as Chat</div>
+              </div>
+              <div class="provider-card" id="card-mem-openrouter" style="padding: 10px; text-align: center; cursor: pointer;">
+                <div class="provider-title" style="font-size: 12px;"><i class="fa-solid fa-globe"></i> OpenRouter</div>
+              </div>
+              <div class="provider-card" id="card-mem-deepinfra" style="padding: 10px; text-align: center; cursor: pointer;">
+                <div class="provider-title" style="font-size: 12px;"><i class="fa-solid fa-bolt"></i> DeepInfra</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="form-group" id="group-memory-model" style="display: none;">
+            <label for="settings-memory-model-preset" style="font-size: 12px;">Memory Model Engine</label>
+            <select id="settings-memory-model-preset" class="form-control" style="margin-bottom: 4px;">
+              <option value="nvidia/nemotron-3-ultra-550b-a55b:free">nvidia/nemotron-3-ultra-550b-a55b:free (Free 550B)</option>
+              <option value="sao10k/l3.3-euryale-70b">sao10k/l3.3-euryale-70b (Euryale 70B)</option>
+              <option value="meta-llama/llama-3.3-70b-instruct">meta-llama/llama-3.3-70b-instruct</option>
+              <option value="gryphe/mythomax-l2-13b">gryphe/mythomax-l2-13b</option>
+              <option value="NousResearch/Hermes-3-Llama-3.1-70B">NousResearch/Hermes-3-Llama-3.1-70B</option>
+              <option value="custom">Custom Model Identifier...</option>
+            </select>
+            <input type="text" id="settings-memory-model-custom" placeholder="Enter custom model string (e.g. nvidia/nemotron-3-ultra-550b-a55b:free)" class="hidden" style="margin-top: 4px;" />
+          </div>
+
+          <div class="form-group" style="margin-top: 10px;">
+            <label for="settings-memory-budget">Memory Budget: <span id="memory-budget-display" style="color: var(--accent-green); font-weight: 600;">5000</span> tokens</label>
+            <input type="range" id="settings-memory-budget" min="1000" max="10000" step="500" value="5000" style="width: 100%; cursor: pointer;">
+            <span style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">Maximum token allocation reserved for generating and storing story memory summaries.</span>
+          </div>
         </div>
       </div>
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" id="btn-cancel-settings">Cancel</button>
         <button type="button" class="btn btn-primary" id="btn-save-settings">Save Settings</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: CUSTOM IN-APP CONFIRMATION DIALOG -->
+  <div class="modal-overlay hidden" id="confirm-modal" style="z-index: 1200;">
+    <div class="modal-card" style="max-width: 440px;">
+      <div class="modal-header">
+        <h3 id="confirm-modal-title"><i class="fa-solid fa-triangle-exclamation" style="color: #ea4335;"></i> Confirm Action</h3>
+        <button id="btn-close-confirm-modal" class="close-btn">&times;</button>
+      </div>
+      <div class="modal-body" style="padding: 20px;">
+        <p id="confirm-modal-message" style="font-size: 14px; line-height: 1.5; color: var(--text-main);">Are you sure you want to proceed?</p>
+      </div>
+      <div class="modal-footer" style="padding: 14px 20px; background-color: var(--bg-header); border-top: 1px solid var(--border-color); display: flex; justify-content: flex-end; gap: 10px;">
+        <button type="button" class="btn btn-secondary" id="btn-cancel-confirm">Cancel</button>
+        <button type="button" class="btn btn-primary" id="btn-action-confirm">Confirm</button>
       </div>
     </div>
   </div>

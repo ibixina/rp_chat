@@ -3,6 +3,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let personas = [];
   let activePersonaId = null;
   const generatingPersonas = {};
+  const chatCache = {};
 
   // DOM Elements
   const contactListEl = document.getElementById('contact-list');
@@ -27,8 +28,25 @@ document.addEventListener('DOMContentLoaded', () => {
 
   const btnAddPersona = document.getElementById('btn-add-persona');
   const btnEditPersona = document.getElementById('btn-edit-persona');
+  const btnDeletePersonaHeader = document.getElementById('btn-delete-persona-header');
   const btnViewMemory = document.getElementById('btn-view-memory');
   const btnClearChat = document.getElementById('btn-clear-chat');
+  const btnExportChat = document.getElementById('btn-export-chat');
+
+  // Export JSON helper
+  function exportChatJson(personaId) {
+    if (!personaId) return;
+    const p = personas.find(item => item.id === personaId);
+    const name = p ? p.name : 'chat';
+    const safeName = name.toLowerCase().replace(/[^a-z0-9]/g, '_');
+
+    const link = document.createElement('a');
+    link.href = `/api/chats/${personaId}/export`;
+    link.download = `${safeName}_chat_export_${Date.now()}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }
 
   // Sidebar Fold / Collapse Toggle
   function setSidebarCollapsed(collapsed) {
@@ -67,6 +85,8 @@ document.addEventListener('DOMContentLoaded', () => {
   const modalTitle = document.getElementById('modal-title');
   const btnCloseModal = document.getElementById('btn-close-modal');
   const btnCancelModal = document.getElementById('btn-cancel-modal');
+  const btnDeletePersona = document.getElementById('btn-delete-persona');
+  const btnExportPersonaModal = document.getElementById('btn-export-persona-modal');
   const formAvatarFile = document.getElementById('form-avatar-file');
   const formAvatarPreview = document.getElementById('form-avatar-preview');
 
@@ -92,6 +112,32 @@ document.addEventListener('DOMContentLoaded', () => {
       if (p) openPersonaModal(p);
     }
   });
+
+  if (btnExportChat) {
+    btnExportChat.addEventListener('click', () => {
+      if (activePersonaId) exportChatJson(activePersonaId);
+    });
+  }
+
+  if (btnExportPersonaModal) {
+    btnExportPersonaModal.addEventListener('click', () => {
+      const pId = document.getElementById('form-persona-id').value;
+      if (pId) exportChatJson(pId);
+    });
+  }
+
+  if (btnDeletePersonaHeader) {
+    btnDeletePersonaHeader.addEventListener('click', () => {
+      if (activePersonaId) deletePersonaAction(activePersonaId);
+    });
+  }
+
+  if (btnDeletePersona) {
+    btnDeletePersona.addEventListener('click', () => {
+      const pId = document.getElementById('form-persona-id').value;
+      if (pId) deletePersonaAction(pId);
+    });
+  }
 
   btnViewMemory.addEventListener('click', openMemoryModal);
   btnCloseMemoryModal.addEventListener('click', closeMemoryModal);
@@ -125,15 +171,190 @@ document.addEventListener('DOMContentLoaded', () => {
     messageInput.style.height = Math.min(messageInput.scrollHeight, 120) + 'px';
   });
 
-  // Avatar Image Preview
+  // Avatar Crop Modal Elements & Variables
+  const avatarCropModal = document.getElementById('avatar-crop-modal');
+  const cropViewport = document.getElementById('crop-viewport');
+  const cropImage = document.getElementById('crop-image');
+  const cropZoomSlider = document.getElementById('crop-zoom-slider');
+  const btnCloseCropModal = document.getElementById('btn-close-crop-modal');
+  const btnResetCrop = document.getElementById('btn-reset-crop');
+  const btnCancelCrop = document.getElementById('btn-cancel-crop');
+  const btnApplyCrop = document.getElementById('btn-apply-crop');
+
+  let cropState = {
+    baseScale: 1,
+    zoomScale: 1,
+    offsetX: 0,
+    offsetY: 0,
+    isDragging: false,
+    startX: 0,
+    startY: 0,
+    initialOffsetX: 0,
+    initialOffsetY: 0,
+    fileName: 'avatar.png',
+    fileType: 'image/png'
+  };
+  let pendingAvatarBlob = null;
+
+  function updateCropTransform() {
+    if (!cropImage.naturalWidth || !cropImage.naturalHeight) return;
+    const viewportSize = 260;
+    const totalScale = cropState.baseScale * cropState.zoomScale;
+    const currentWidth = cropImage.naturalWidth * totalScale;
+    const currentHeight = cropImage.naturalHeight * totalScale;
+
+    const maxX = Math.max(0, (currentWidth - viewportSize) / 2);
+    const maxY = Math.max(0, (currentHeight - viewportSize) / 2);
+
+    cropState.offsetX = Math.max(-maxX, Math.min(maxX, cropState.offsetX));
+    cropState.offsetY = Math.max(-maxY, Math.min(maxY, cropState.offsetY));
+
+    cropImage.style.transform = `translate(calc(-50% + ${cropState.offsetX}px), calc(-50% + ${cropState.offsetY}px)) scale(${totalScale})`;
+  }
+
+  function openCropModal(file) {
+    if (!file) return;
+    cropState.fileName = file.name || 'avatar.png';
+    cropState.fileType = file.type || 'image/png';
+
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      cropImage.onload = () => {
+        const viewportSize = 260;
+        cropState.baseScale = Math.max(viewportSize / cropImage.naturalWidth, viewportSize / cropImage.naturalHeight);
+        cropState.zoomScale = 1;
+        cropZoomSlider.value = 1;
+        cropState.offsetX = 0;
+        cropState.offsetY = 0;
+        cropImage.style.width = cropImage.naturalWidth + 'px';
+        cropImage.style.height = cropImage.naturalHeight + 'px';
+        updateCropTransform();
+        avatarCropModal.classList.remove('hidden');
+      };
+      cropImage.src = evt.target.result;
+    };
+    reader.readAsDataURL(file);
+  }
+
+  function closeCropModal() {
+    avatarCropModal.classList.add('hidden');
+    cropState.isDragging = false;
+  }
+
+  // Crop Viewport Dragging Event Listeners
+  const startDrag = (clientX, clientY) => {
+    cropState.isDragging = true;
+    cropState.startX = clientX;
+    cropState.startY = clientY;
+    cropState.initialOffsetX = cropState.offsetX;
+    cropState.initialOffsetY = cropState.offsetY;
+  };
+
+  const moveDrag = (clientX, clientY) => {
+    if (!cropState.isDragging) return;
+    cropState.offsetX = cropState.initialOffsetX + (clientX - cropState.startX);
+    cropState.offsetY = cropState.initialOffsetY + (clientY - cropState.startY);
+    updateCropTransform();
+  };
+
+  const endDrag = () => {
+    cropState.isDragging = false;
+  };
+
+  if (cropViewport) {
+    cropViewport.addEventListener('mousedown', (e) => startDrag(e.clientX, e.clientY));
+    window.addEventListener('mousemove', (e) => moveDrag(e.clientX, e.clientY));
+    window.addEventListener('mouseup', endDrag);
+
+    cropViewport.addEventListener('touchstart', (e) => {
+      if (e.touches.length === 1) {
+        startDrag(e.touches[0].clientX, e.touches[0].clientY);
+      }
+    }, { passive: true });
+
+    window.addEventListener('touchmove', (e) => {
+      if (cropState.isDragging && e.touches.length === 1) {
+        moveDrag(e.touches[0].clientX, e.touches[0].clientY);
+      }
+    }, { passive: true });
+
+    window.addEventListener('touchend', endDrag);
+
+    cropViewport.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const delta = e.deltaY > 0 ? -0.05 : 0.05;
+      const newVal = Math.min(4, Math.max(1, parseFloat(cropZoomSlider.value) + delta));
+      cropZoomSlider.value = newVal;
+      cropState.zoomScale = newVal;
+      updateCropTransform();
+    }, { passive: false });
+  }
+
+  if (cropZoomSlider) {
+    cropZoomSlider.addEventListener('input', () => {
+      cropState.zoomScale = parseFloat(cropZoomSlider.value);
+      updateCropTransform();
+    });
+  }
+
+  if (btnResetCrop) {
+    btnResetCrop.addEventListener('click', () => {
+      cropState.zoomScale = 1;
+      cropZoomSlider.value = 1;
+      cropState.offsetX = 0;
+      cropState.offsetY = 0;
+      updateCropTransform();
+    });
+  }
+
+  if (btnCloseCropModal) btnCloseCropModal.addEventListener('click', closeCropModal);
+  if (btnCancelCrop) btnCancelCrop.addEventListener('click', closeCropModal);
+
+  if (btnApplyCrop) {
+    btnApplyCrop.addEventListener('click', () => {
+      if (!cropImage.naturalWidth || !cropImage.naturalHeight) return;
+      const canvas = document.createElement('canvas');
+      const outputSize = 300;
+      canvas.width = outputSize;
+      canvas.height = outputSize;
+      const ctx = canvas.getContext('2d');
+
+      const viewportSize = 260;
+      const ratio = outputSize / viewportSize;
+      const totalScale = cropState.baseScale * cropState.zoomScale;
+
+      ctx.fillStyle = '#0b141a';
+      ctx.fillRect(0, 0, outputSize, outputSize);
+
+      ctx.save();
+      ctx.translate(outputSize / 2 + cropState.offsetX * ratio, outputSize / 2 + cropState.offsetY * ratio);
+      const drawW = cropImage.naturalWidth * totalScale * ratio;
+      const drawH = cropImage.naturalHeight * totalScale * ratio;
+      ctx.drawImage(cropImage, -drawW / 2, -drawH / 2, drawW, drawH);
+      ctx.restore();
+
+      canvas.toBlob((blob) => {
+        if (!blob) return;
+        pendingAvatarBlob = blob;
+        const file = new File([blob], cropState.fileName, { type: cropState.fileType });
+        try {
+          const dt = new DataTransfer();
+          dt.items.add(file);
+          formAvatarFile.files = dt.files;
+        } catch (err) {
+          console.warn('DataTransfer not fully supported:', err);
+        }
+        formAvatarPreview.src = URL.createObjectURL(blob);
+        closeCropModal();
+      }, cropState.fileType, 0.95);
+    });
+  }
+
+  // Avatar Image Selection Trigger
   formAvatarFile.addEventListener('change', (e) => {
     const file = e.target.files[0];
     if (file) {
-      const reader = new FileReader();
-      reader.onload = (evt) => {
-        formAvatarPreview.src = evt.target.result;
-      };
-      reader.readAsDataURL(file);
+      openCropModal(file);
     }
   });
 
@@ -141,6 +362,9 @@ document.addEventListener('DOMContentLoaded', () => {
   personaForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const formData = new FormData(personaForm);
+    if (pendingAvatarBlob) {
+      formData.set('avatar', pendingAvatarBlob, cropState.fileName);
+    }
 
     try {
       const res = await fetch('/api/personas', {
@@ -149,11 +373,12 @@ document.addEventListener('DOMContentLoaded', () => {
       });
       const data = await res.json();
       if (data.success) {
+        pendingAvatarBlob = null;
         closePersonaModal();
         await loadPersonas();
         selectPersona(data.persona.id);
       } else {
-        alert('Error saving persona: ' + data.error);
+        console.error('Error saving persona:', data.error);
       }
     } catch (err) {
       console.error('Save persona error:', err);
@@ -178,6 +403,50 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     } catch (err) {
       console.error('Load personas error:', err);
+    }
+  }
+
+  function isPersonaOnline(persona) {
+    if (!persona) return false;
+    const ts = (persona.lastTimestamp && !isNaN(persona.lastTimestamp)) 
+      ? persona.lastTimestamp 
+      : (persona.createdAt ? new Date(persona.createdAt).getTime() : 0);
+    if (!ts || isNaN(ts)) return true;
+    const ONE_HOUR_MS = 60 * 60 * 1000;
+    return (Date.now() - ts) <= ONE_HOUR_MS;
+  }
+
+  function updateHeaderStatus(personaId, persona) {
+    if (!persona) return;
+    const headerBadgeEl = document.getElementById('header-online-badge');
+    const headerAvatarWrapper = document.querySelector('.chat-header-info .avatar-wrapper');
+    const isOnline = isPersonaOnline(persona);
+    const isGenerating = !!generatingPersonas[personaId];
+
+    if (isGenerating) {
+      currentStatusEl.textContent = 'typing...';
+      currentStatusEl.className = 'status-subtitle typing';
+      if (headerBadgeEl) {
+        headerBadgeEl.className = 'online-badge';
+        headerBadgeEl.title = 'Online';
+      }
+      if (headerAvatarWrapper) headerAvatarWrapper.className = 'avatar-wrapper';
+    } else if (isOnline) {
+      currentStatusEl.textContent = 'online';
+      currentStatusEl.className = 'status-subtitle';
+      if (headerBadgeEl) {
+        headerBadgeEl.className = 'online-badge';
+        headerBadgeEl.title = 'Online';
+      }
+      if (headerAvatarWrapper) headerAvatarWrapper.className = 'avatar-wrapper';
+    } else {
+      currentStatusEl.textContent = 'offline';
+      currentStatusEl.className = 'status-subtitle offline';
+      if (headerBadgeEl) {
+        headerBadgeEl.className = 'online-badge offline';
+        headerBadgeEl.title = 'Offline';
+      }
+      if (headerAvatarWrapper) headerAvatarWrapper.className = 'avatar-wrapper offline';
     }
   }
 
@@ -207,54 +476,111 @@ document.addEventListener('DOMContentLoaded', () => {
         return (bT || 0) - (aT || 0);
       });
       renderContactList(personas);
+      if (activePersonaId === personaId) {
+        updateHeaderStatus(personaId, p);
+      }
     }
   }
 
   function renderContactList(list) {
-    contactListEl.innerHTML = '';
-    if (list.length === 0) {
+    if (!list || list.length === 0) {
       contactListEl.innerHTML = '<div style="padding: 20px; text-align: center; color: var(--text-muted); font-size: 13px;">No contacts found</div>';
       return;
     }
 
-    list.forEach(p => {
-      const item = document.createElement('div');
-      item.className = `contact-item ${p.id === activePersonaId ? 'active' : ''}`;
-      item.dataset.id = p.id;
-      
+    const emptyMsg = contactListEl.querySelector('div[style*="padding: 20px"]');
+    if (emptyMsg) emptyMsg.remove();
+
+    const existingItems = {};
+    Array.from(contactListEl.querySelectorAll('.contact-item')).forEach(el => {
+      existingItems[el.dataset.id] = el;
+    });
+
+    list.forEach((p, idx) => {
+      let item = existingItems[p.id];
       const isGenerating = !!generatingPersonas[p.id];
+      const isOnline = isPersonaOnline(p);
+
       const rawSnippet = isGenerating ? 'typing...' : (p.lastMessageText || p.firstMessage || p.description || '');
       const snippet = isGenerating ? 'typing...' : formatSnippetPreview(rawSnippet);
-      const timeDisplay = isGenerating ? 'typing...' : (p.lastMessageTime || 'online');
+      const timeDisplay = isGenerating ? 'typing...' : (p.lastMessageTime || (isOnline ? 'online' : 'offline'));
       const snippetStyle = isGenerating ? 'color: var(--accent-green); font-weight: 500;' : '';
-      const timeStyle = isGenerating ? 'color: var(--accent-green); font-weight: 500;' : '';
+      const timeStyle = isGenerating ? 'color: var(--accent-green); font-weight: 500;' : (isOnline ? '' : 'color: var(--text-muted);');
+      const wrapperClass = (isGenerating || isOnline) ? 'avatar-wrapper' : 'avatar-wrapper offline';
+      const badgeClass = (isGenerating || isOnline) ? 'online-badge' : 'online-badge offline';
+      const badgeTitle = (isGenerating || isOnline) ? 'Online' : 'Offline';
+      const isActive = (p.id === activePersonaId);
 
-      item.innerHTML = `
-        <div class="avatar-wrapper">
-          <img src="${p.avatarUrl || '/uploads/default-avatar.svg'}" alt="${p.name}" class="contact-avatar" onerror="this.src='/uploads/default-avatar.svg'">
-          <span class="online-badge" title="Online"></span>
-        </div>
-        <div class="contact-details">
-          <div class="contact-top-row">
-            <span class="contact-name">${escapeHtml(p.name)}</span>
-            <span class="contact-time" style="${timeStyle}">${escapeHtml(timeDisplay)}</span>
+      if (item) {
+        item.className = `contact-item ${isActive ? 'active' : ''}`;
+        const nameEl = item.querySelector('.contact-name');
+        const timeEl = item.querySelector('.contact-time');
+        const snippetEl = item.querySelector('.contact-snippet');
+        const avatarEl = item.querySelector('.contact-avatar');
+        const wrapperEl = item.querySelector('.avatar-wrapper');
+        const badgeEl = item.querySelector('.online-badge');
+
+        if (nameEl && nameEl.textContent !== p.name) nameEl.textContent = p.name;
+        if (timeEl && timeEl.textContent !== timeDisplay) {
+          timeEl.textContent = timeDisplay;
+          timeEl.style.cssText = timeStyle;
+        }
+        if (snippetEl && snippetEl.textContent !== snippet) {
+          snippetEl.textContent = snippet;
+          snippetEl.style.cssText = snippetStyle;
+          snippetEl.removeAttribute('title');
+        }
+        if (avatarEl && avatarEl.getAttribute('src') !== (p.avatarUrl || '/uploads/default-avatar.svg')) {
+          avatarEl.src = p.avatarUrl || '/uploads/default-avatar.svg';
+        }
+        if (wrapperEl && wrapperEl.className !== wrapperClass) {
+          wrapperEl.className = wrapperClass;
+        }
+        if (badgeEl && badgeEl.className !== badgeClass) {
+          badgeEl.className = badgeClass;
+          badgeEl.title = badgeTitle;
+        }
+
+        if (contactListEl.children[idx] !== item) {
+          contactListEl.insertBefore(item, contactListEl.children[idx] || null);
+        }
+        delete existingItems[p.id];
+      } else {
+        item = document.createElement('div');
+        item.className = `contact-item ${isActive ? 'active' : ''}`;
+        item.dataset.id = p.id;
+        item.innerHTML = `
+          <div class="${wrapperClass}">
+            <img src="${p.avatarUrl || '/uploads/default-avatar.svg'}" alt="${escapeHtml(p.name)}" class="contact-avatar" onerror="this.src='/uploads/default-avatar.svg'">
+            <span class="${badgeClass}" title="${badgeTitle}"></span>
           </div>
-          <div class="contact-snippet" style="${snippetStyle}" title="${escapeHtml(rawSnippet)}">${escapeHtml(snippet)}</div>
-        </div>
-      `;
-
-      item.addEventListener('click', () => selectPersona(p.id));
-      contactListEl.appendChild(item);
+          <div class="contact-details">
+            <div class="contact-top-row">
+              <span class="contact-name">${escapeHtml(p.name)}</span>
+              <span class="contact-time" style="${timeStyle}">${escapeHtml(timeDisplay)}</span>
+            </div>
+            <div class="contact-snippet" style="${snippetStyle}">${escapeHtml(snippet)}</div>
+          </div>
+        `;
+        item.addEventListener('click', () => selectPersona(p.id));
+        contactListEl.insertBefore(item, contactListEl.children[idx] || null);
+      }
     });
+
+    Object.values(existingItems).forEach(el => el.remove());
   }
 
+  let searchDebounceTimer = null;
   function filterContacts() {
-    const query = searchInput.value.toLowerCase().trim();
-    const filtered = personas.filter(p => 
-      p.name.toLowerCase().includes(query) || 
-      p.description.toLowerCase().includes(query)
-    );
-    renderContactList(filtered);
+    if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = setTimeout(() => {
+      const query = searchInput.value.toLowerCase().trim();
+      const filtered = personas.filter(p => 
+        p.name.toLowerCase().includes(query) || 
+        p.description.toLowerCase().includes(query)
+      );
+      renderContactList(filtered);
+    }, 100);
   }
 
   async function selectPersona(personaId) {
@@ -271,21 +597,24 @@ document.addEventListener('DOMContentLoaded', () => {
     // Update Header
     currentAvatarEl.src = persona.avatarUrl || '/uploads/default-avatar.svg';
     currentNameEl.textContent = persona.name;
-    
-    if (generatingPersonas[personaId]) {
-      currentStatusEl.textContent = 'typing...';
-      currentStatusEl.className = 'status-subtitle typing';
-    } else {
-      currentStatusEl.textContent = 'online';
-      currentStatusEl.className = 'status-subtitle';
+    updateHeaderStatus(personaId, persona);
+
+    // 1. Instant Cache-First Render (0ms Latency)
+    if (chatCache[personaId]) {
+      renderMessages(chatCache[personaId].messages);
+      if (generatingPersonas[personaId]) {
+        showTypingIndicator();
+      }
     }
 
-    // Fetch and render messages
+    // 2. Background revalidation
     try {
       const res = await fetch(`/api/chats/${personaId}`);
       const data = await res.json();
       if (data.success && activePersonaId === personaId) {
+        chatCache[personaId] = { persona: data.persona, messages: data.messages };
         renderMessages(data.messages);
+        updateHeaderStatus(personaId, data.persona);
         if (generatingPersonas[personaId]) {
           showTypingIndicator();
         }
@@ -299,21 +628,69 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  const MESSAGE_BATCH_SIZE = 30;
+  let activeMessagesList = [];
+  let displayedMessageCount = 30;
+
   function renderMessages(messages) {
+    activeMessagesList = messages || [];
+    displayedMessageCount = Math.min(MESSAGE_BATCH_SIZE, activeMessagesList.length);
+    renderCurrentMessageBatch();
+    scrollToBottom();
+  }
+
+  function renderCurrentMessageBatch(keepScrollPosition = false) {
+    const oldScrollHeight = chatFeedEl.scrollHeight;
+    const oldScrollTop = chatFeedEl.scrollTop;
+
     chatFeedEl.innerHTML = '';
-    
+
+    const hasMoreOlder = activeMessagesList.length > displayedMessageCount;
+    if (hasMoreOlder) {
+      const remainingCount = activeMessagesList.length - displayedMessageCount;
+      const loadBanner = document.createElement('div');
+      loadBanner.id = 'load-older-messages-banner';
+      loadBanner.style.cssText = 'text-align: center; padding: 10px 0; margin: 8px 0; font-size: 12px; color: var(--accent-green); cursor: pointer; user-select: none; font-weight: 500; transition: opacity 0.2s ease;';
+      loadBanner.innerHTML = `<i class="fa-solid fa-clock-rotate-left"></i> Load older messages (${remainingCount} remaining)`;
+      loadBanner.addEventListener('click', loadOlderMessages);
+      chatFeedEl.appendChild(loadBanner);
+    }
+
     // Add date badge
     const dateBadge = document.createElement('div');
     dateBadge.style.cssText = 'text-align: center; margin: 10px 0; font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;';
     dateBadge.textContent = 'Today';
     chatFeedEl.appendChild(dateBadge);
 
-    messages.forEach(msg => {
+    const startIndex = Math.max(0, activeMessagesList.length - displayedMessageCount);
+    const visibleMessages = activeMessagesList.slice(startIndex);
+
+    visibleMessages.forEach(msg => {
       appendMessageBubble(msg);
     });
 
-    scrollToBottom();
+    if (keepScrollPosition) {
+      const newScrollHeight = chatFeedEl.scrollHeight;
+      chatFeedEl.scrollTop = oldScrollTop + (newScrollHeight - oldScrollHeight);
+    }
   }
+
+  function loadOlderMessages() {
+    if (displayedMessageCount >= activeMessagesList.length) return;
+    displayedMessageCount = Math.min(displayedMessageCount + MESSAGE_BATCH_SIZE, activeMessagesList.length);
+    renderCurrentMessageBatch(true);
+  }
+
+  let isScrollLoading = false;
+  chatFeedEl.addEventListener('scroll', () => {
+    if (chatFeedEl.scrollTop <= 60 && displayedMessageCount < activeMessagesList.length) {
+      if (!isScrollLoading) {
+        isScrollLoading = true;
+        loadOlderMessages();
+        setTimeout(() => { isScrollLoading = false; }, 300);
+      }
+    }
+  });
 
   function showTypingIndicator() {
     removeTypingIndicator();
@@ -334,95 +711,24 @@ document.addEventListener('DOMContentLoaded', () => {
     elements.forEach(el => el.remove());
   }
 
-  function splitResponseIntoMessages(fullText) {
-    const text = fullText.trim();
-    if (!text) return [];
-
-    const MAX_CHUNK_LENGTH = 1000;
-    if (text.length <= MAX_CHUNK_LENGTH) {
-      return [text];
-    }
-
-    const paragraphs = text.split(/\n+/).map(p => p.trim()).filter(Boolean);
-    const chunks = [];
-    let currentChunk = '';
-
-    for (const para of paragraphs) {
-      if (para.length <= MAX_CHUNK_LENGTH) {
-        if (!currentChunk) {
-          currentChunk = para;
-        } else if (currentChunk.length + para.length + 2 <= MAX_CHUNK_LENGTH) {
-          currentChunk += '\n\n' + para;
-        } else {
-          chunks.push(currentChunk);
-          currentChunk = para;
-        }
-      } else {
-        let remaining = para;
-        while (remaining.length > 0) {
-          if (remaining.length <= MAX_CHUNK_LENGTH) {
-            if (!currentChunk) {
-              currentChunk = remaining;
-            } else if (currentChunk.length + remaining.length + 2 <= MAX_CHUNK_LENGTH) {
-              currentChunk += '\n\n' + remaining;
-            } else {
-              chunks.push(currentChunk);
-              currentChunk = remaining;
-            }
-            break;
-          }
-
-          let splitIdx = -1;
-          const target = remaining.slice(0, MAX_CHUNK_LENGTH);
-          const match = target.search(/[.!?](?=[\s"]|$)[^.!?]*$/);
-          if (match !== -1) {
-            splitIdx = match + 1;
-          } else {
-            splitIdx = target.lastIndexOf(' ');
-          }
-
-          if (splitIdx <= 0) splitIdx = MAX_CHUNK_LENGTH;
-
-          const slicePart = remaining.slice(0, splitIdx).trim();
-          remaining = remaining.slice(splitIdx).trim();
-
-          if (slicePart) {
-            if (!currentChunk) {
-              currentChunk = slicePart;
-            } else if (currentChunk.length + slicePart.length + 2 <= MAX_CHUNK_LENGTH) {
-              currentChunk += '\n\n' + slicePart;
-            } else {
-              chunks.push(currentChunk);
-              currentChunk = slicePart;
-            }
-          }
-        }
-      }
-    }
-
-    if (currentChunk) {
-      chunks.push(currentChunk);
-    }
-
-    return chunks.length > 0 ? chunks : [text];
-  }
-
-  async function renderPersonaChunks(fullText, serverAssistantMsgId = null) {
+  function renderPersonaMessage(fullText, serverAssistantMsgId = null) {
     removeTypingIndicator();
-    const chunks = splitResponseIntoMessages(fullText);
+    const text = fullText.trim();
+    if (!text) return;
 
-    for (let i = 0; i < chunks.length; i++) {
-      const chunkText = chunks[i];
-      if (!chunkText) continue;
-
-      appendMessageBubble({
-        id: (i === 0 && serverAssistantMsgId) ? serverAssistantMsgId : `msg-${Date.now()}-${i}`,
-        sender: 'persona',
-        text: chunkText,
-        timestamp: new Date().toISOString()
-      });
-      scrollToBottom();
+    const newMsg = {
+      id: serverAssistantMsgId || `msg-${Date.now()}`,
+      sender: 'persona',
+      text: text,
+      timestamp: new Date().toISOString()
+    };
+    activeMessagesList.push(newMsg);
+    if (chatCache[activePersonaId] && Array.isArray(chatCache[activePersonaId].messages)) {
+      chatCache[activePersonaId].messages.push(newMsg);
     }
+    displayedMessageCount++;
+    appendMessageBubble(newMsg);
+    scrollToBottom();
   }
 
   function renderReactionsHtml(reactions) {
@@ -562,14 +868,26 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function deleteSingleMessage(msgId, bubble) {
-    bubble.remove();
-    try {
-      await fetch(`/api/chats/${activePersonaId}/messages/${msgId}`, {
-        method: 'DELETE'
-      });
-    } catch (err) {
-      console.error('Failed to delete message:', err);
-    }
+    showConfirmDialog({
+      title: 'Delete Message',
+      message: 'Are you sure you want to delete this message? This action cannot be undone.',
+      confirmText: 'Delete Message',
+      danger: true,
+      onConfirm: async () => {
+        bubble.remove();
+        activeMessagesList = activeMessagesList.filter(m => m.id !== msgId);
+        if (chatCache[activePersonaId] && Array.isArray(chatCache[activePersonaId].messages)) {
+          chatCache[activePersonaId].messages = chatCache[activePersonaId].messages.filter(m => m.id !== msgId);
+        }
+        try {
+          await fetch(`/api/chats/${activePersonaId}/messages/${msgId}`, {
+            method: 'DELETE'
+          });
+        } catch (err) {
+          console.error('Failed to delete message:', err);
+        }
+      }
+    });
   }
 
   async function retryMessage(msgId) {
@@ -649,7 +967,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (fullResponseText.trim()) {
         updatePersonaLastMessaged(targetPersonaId, fullResponseText.trim());
         if (activePersonaId === targetPersonaId) {
-          await renderPersonaChunks(fullResponseText.trim(), serverAssistantMsgId);
+          renderPersonaMessage(fullResponseText.trim(), serverAssistantMsgId);
         }
       }
     } catch (err) {
@@ -661,8 +979,7 @@ document.addEventListener('DOMContentLoaded', () => {
       generatingPersonas[targetPersonaId] = false;
       if (activePersonaId === targetPersonaId) {
         removeTypingIndicator();
-        currentStatusEl.textContent = 'online';
-        currentStatusEl.className = 'status-subtitle';
+        updateHeaderStatus(targetPersonaId, personas.find(p => p.id === targetPersonaId));
         scrollToBottom();
       }
       renderContactList(personas);
@@ -746,7 +1063,9 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function scrollToBottom() {
-    chatFeedEl.scrollTop = chatFeedEl.scrollHeight;
+    requestAnimationFrame(() => {
+      chatFeedEl.scrollTop = chatFeedEl.scrollHeight;
+    });
   }
 
   // -------------------------------------------------------------
@@ -770,6 +1089,12 @@ document.addEventListener('DOMContentLoaded', () => {
       timestamp: new Date().toISOString(),
       isRead: false
     };
+    activeMessagesList.push(userMsg);
+    if (chatCache[targetPersonaId] && Array.isArray(chatCache[targetPersonaId].messages)) {
+      chatCache[targetPersonaId].messages.push(userMsg);
+    }
+    displayedMessageCount++;
+
     let userBubble = null;
     if (activePersonaId === targetPersonaId) {
       userBubble = appendMessageBubble(userMsg);
@@ -843,7 +1168,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (fullResponseText.trim()) {
         updatePersonaLastMessaged(targetPersonaId, fullResponseText.trim());
         if (activePersonaId === targetPersonaId) {
-          await renderPersonaChunks(fullResponseText.trim(), serverAssistantMsgId);
+          renderPersonaMessage(fullResponseText.trim(), serverAssistantMsgId);
         }
       }
     } catch (err) {
@@ -862,8 +1187,7 @@ document.addEventListener('DOMContentLoaded', () => {
       generatingPersonas[targetPersonaId] = false;
       if (activePersonaId === targetPersonaId) {
         removeTypingIndicator();
-        currentStatusEl.textContent = 'online';
-        currentStatusEl.className = 'status-subtitle';
+        updateHeaderStatus(targetPersonaId, personas.find(p => p.id === targetPersonaId));
         scrollToBottom();
       }
       renderContactList(personas);
@@ -939,27 +1263,104 @@ document.addEventListener('DOMContentLoaded', () => {
       generatingPersonas[targetPersonaId] = false;
       if (activePersonaId === targetPersonaId) {
         removeTypingIndicator();
-        currentStatusEl.textContent = 'online';
-        currentStatusEl.className = 'status-subtitle';
+        updateHeaderStatus(targetPersonaId, personas.find(p => p.id === targetPersonaId));
         scrollToBottom();
       }
       renderContactList(personas);
     }
   }
 
-  async function clearActiveChat() {
-    if (!activePersonaId) return;
-    if (confirm('Are you sure you want to clear this chat history?')) {
-      try {
-        const res = await fetch(`/api/chats/${activePersonaId}/clear`, { method: 'POST' });
-        const data = await res.json();
-        if (data.success) {
-          renderMessages(data.messages);
-        }
-      } catch (err) {
-        console.error('Clear chat error:', err);
-      }
+  function showConfirmDialog({ title = 'Confirm Action', message = 'Are you sure?', confirmText = 'Confirm', danger = false, onConfirm }) {
+    const confirmModal = document.getElementById('confirm-modal');
+    const titleEl = document.getElementById('confirm-modal-title');
+    const msgEl = document.getElementById('confirm-modal-message');
+    const actionBtn = document.getElementById('btn-action-confirm');
+    const cancelBtn = document.getElementById('btn-cancel-confirm');
+    const closeBtn = document.getElementById('btn-close-confirm-modal');
+
+    titleEl.innerHTML = danger 
+      ? `<i class="fa-solid fa-triangle-exclamation" style="color: #ea4335;"></i> ${escapeHtml(title)}` 
+      : escapeHtml(title);
+    msgEl.textContent = message;
+    actionBtn.textContent = confirmText;
+
+    if (danger) {
+      actionBtn.style.backgroundColor = '#ea4335';
+      actionBtn.style.color = '#ffffff';
+    } else {
+      actionBtn.style.backgroundColor = 'var(--accent-green)';
+      actionBtn.style.color = '#ffffff';
     }
+
+    const closeDialog = () => {
+      confirmModal.classList.add('hidden');
+    };
+
+    actionBtn.onclick = () => {
+      closeDialog();
+      if (typeof onConfirm === 'function') onConfirm();
+    };
+
+    cancelBtn.onclick = closeDialog;
+    if (closeBtn) closeBtn.onclick = closeDialog;
+
+    confirmModal.classList.remove('hidden');
+  }
+
+  function clearActiveChat() {
+    if (!activePersonaId) return;
+    const persona = personas.find(p => p.id === activePersonaId);
+    const name = persona ? persona.name : 'this persona';
+    showConfirmDialog({
+      title: 'Clear Chat History',
+      message: `Are you sure you want to clear all chat history for ${name}?`,
+      confirmText: 'Clear Chat',
+      danger: true,
+      onConfirm: async () => {
+        try {
+          const res = await fetch(`/api/chats/${activePersonaId}/clear`, { method: 'POST' });
+          const data = await res.json();
+          if (data.success) {
+            delete chatCache[activePersonaId];
+            renderMessages(data.messages);
+          }
+        } catch (err) {
+          console.error('Clear chat error:', err);
+        }
+      }
+    });
+  }
+
+  function deletePersonaAction(personaId) {
+    if (!personaId) return;
+    const p = personas.find(item => item.id === personaId);
+    const name = p ? p.name : 'this contact';
+
+    showConfirmDialog({
+      title: 'Delete Contact',
+      message: `Are you sure you want to delete "${name}"? This action cannot be undone and will delete all conversation history.`,
+      confirmText: 'Delete Contact',
+      danger: true,
+      onConfirm: async () => {
+        try {
+          const res = await fetch(`/api/personas/${personaId}`, { method: 'DELETE' });
+          const data = await res.json();
+          if (data.success) {
+            delete chatCache[personaId];
+            delete generatingPersonas[personaId];
+            closePersonaModal();
+            if (activePersonaId === personaId) {
+              activePersonaId = null;
+              activeChatViewEl.classList.add('hidden');
+              emptyStateEl.classList.remove('hidden');
+            }
+            await loadPersonas();
+          }
+        } catch (err) {
+          console.error('Delete persona error:', err);
+        }
+      }
+    });
   }
 
   // -------------------------------------------------------------
@@ -967,6 +1368,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // -------------------------------------------------------------
   function openPersonaModal(persona = null) {
     personaForm.reset();
+    pendingAvatarBlob = null;
     if (persona) {
       modalTitle.textContent = 'Edit Contact';
       document.getElementById('form-persona-id').value = persona.id;
@@ -975,16 +1377,21 @@ document.addEventListener('DOMContentLoaded', () => {
       document.getElementById('form-first-message').value = persona.firstMessage || '';
       document.getElementById('form-avatar-url').value = persona.avatarUrl || '/uploads/default-avatar.svg';
       formAvatarPreview.src = persona.avatarUrl || '/uploads/default-avatar.svg';
+      if (btnDeletePersona) btnDeletePersona.classList.remove('hidden');
+      if (btnExportPersonaModal) btnExportPersonaModal.classList.remove('hidden');
     } else {
       modalTitle.textContent = 'Add New Contact';
       document.getElementById('form-persona-id').value = '';
       document.getElementById('form-avatar-url').value = '/uploads/default-avatar.svg';
       formAvatarPreview.src = '/uploads/default-avatar.svg';
+      if (btnDeletePersona) btnDeletePersona.classList.add('hidden');
+      if (btnExportPersonaModal) btnExportPersonaModal.classList.add('hidden');
     }
     personaModal.classList.remove('hidden');
   }
 
   function closePersonaModal() {
+    pendingAvatarBlob = null;
     personaModal.classList.add('hidden');
   }
 
@@ -1055,11 +1462,27 @@ document.addEventListener('DOMContentLoaded', () => {
     // 1. Clean orphan asterisks like "* " or " *"
     escaped = escaped.replace(/(^|\s)\*{1,2}(\s|$)/g, '$1$2');
 
+    // Helper to format asterisk content: preserve quoted dialogue as normal text, wrap narrative in message-action
+    function formatActionContent(innerText) {
+      if (!innerText.includes('&quot;')) {
+        return `<span class="message-action">${innerText}</span>`;
+      }
+      const parts = innerText.split(/(&quot;[^&]*?&quot;)/g);
+      return parts.map(part => {
+        if (!part) return '';
+        if (part.startsWith('&quot;') && part.endsWith('&quot;')) {
+          return part;
+        } else {
+          return `<span class="message-action">${part}</span>`;
+        }
+      }).join('');
+    }
+
     // 2. Format paired asterisks: *action* or **action**
-    escaped = escaped.replace(/\*{1,2}([^*]+?)\*{1,2}/g, '<span class="message-action">$1</span>');
+    escaped = escaped.replace(/\*{1,2}([^*]+?)\*{1,2}/g, (match, innerText) => formatActionContent(innerText));
 
     // 3. Format unclosed asterisks: *action until end of text/chunk
-    escaped = escaped.replace(/(^|\s)\*{1,2}([^*<]+)$/g, '$1<span class="message-action">$2</span>');
+    escaped = escaped.replace(/(^|\s)\*{1,2}([^*<]+)$/g, (match, prefix, innerText) => prefix + formatActionContent(innerText));
 
     return escaped;
   }
@@ -1079,10 +1502,26 @@ document.addEventListener('DOMContentLoaded', () => {
   const settingsModelCustom = document.getElementById('settings-model-custom');
   const settingsTemp = document.getElementById('settings-temp');
   const tempValDisplay = document.getElementById('temp-val-display');
+  const settingsFreqPenalty = document.getElementById('settings-freq-penalty');
+  const freqPenaltyDisplay = document.getElementById('freq-penalty-display');
+  const settingsPresencePenalty = document.getElementById('settings-presence-penalty');
+  const presencePenaltyDisplay = document.getElementById('presence-penalty-display');
+  const settingsRepPenalty = document.getElementById('settings-rep-penalty');
+  const repPenaltyDisplay = document.getElementById('rep-penalty-display');
   const settingsContextBudget = document.getElementById('settings-context-budget');
   const contextBudgetDisplay = document.getElementById('context-budget-display');
+  const settingsMemoryBudget = document.getElementById('settings-memory-budget');
+  const memoryBudgetDisplay = document.getElementById('memory-budget-display');
+
+  const cardMemInherit = document.getElementById('card-mem-inherit');
+  const cardMemOpenrouter = document.getElementById('card-mem-openrouter');
+  const cardMemDeepinfra = document.getElementById('card-mem-deepinfra');
+  const groupMemoryModel = document.getElementById('group-memory-model');
+  const settingsMemoryModelPreset = document.getElementById('settings-memory-model-preset');
+  const settingsMemoryModelCustom = document.getElementById('settings-memory-model-custom');
 
   let activeProvider = 'openrouter';
+  let activeMemoryProvider = 'inherit';
 
   if (btnUserProfile) {
     btnUserProfile.addEventListener('click', openSettingsModal);
@@ -1098,9 +1537,31 @@ document.addEventListener('DOMContentLoaded', () => {
     cardDeepinfra.addEventListener('click', () => setProviderCard('deepinfra'));
   }
 
+  if (cardMemInherit) cardMemInherit.addEventListener('click', () => setMemoryProviderCard('inherit'));
+  if (cardMemOpenrouter) cardMemOpenrouter.addEventListener('click', () => setMemoryProviderCard('openrouter'));
+  if (cardMemDeepinfra) cardMemDeepinfra.addEventListener('click', () => setMemoryProviderCard('deepinfra'));
+
   if (settingsTemp && tempValDisplay) {
     settingsTemp.addEventListener('input', (e) => {
       tempValDisplay.textContent = parseFloat(e.target.value).toFixed(2);
+    });
+  }
+
+  if (settingsFreqPenalty && freqPenaltyDisplay) {
+    settingsFreqPenalty.addEventListener('input', (e) => {
+      freqPenaltyDisplay.textContent = parseFloat(e.target.value).toFixed(2);
+    });
+  }
+
+  if (settingsPresencePenalty && presencePenaltyDisplay) {
+    settingsPresencePenalty.addEventListener('input', (e) => {
+      presencePenaltyDisplay.textContent = parseFloat(e.target.value).toFixed(2);
+    });
+  }
+
+  if (settingsRepPenalty && repPenaltyDisplay) {
+    settingsRepPenalty.addEventListener('input', (e) => {
+      repPenaltyDisplay.textContent = parseFloat(e.target.value).toFixed(2);
     });
   }
 
@@ -1110,12 +1571,28 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  if (settingsMemoryBudget && memoryBudgetDisplay) {
+    settingsMemoryBudget.addEventListener('input', (e) => {
+      memoryBudgetDisplay.textContent = parseInt(e.target.value, 10);
+    });
+  }
+
   if (settingsModelPreset && settingsModelCustom) {
     settingsModelPreset.addEventListener('change', (e) => {
       if (e.target.value === 'custom') {
         settingsModelCustom.classList.remove('hidden');
       } else {
         settingsModelCustom.classList.add('hidden');
+      }
+    });
+  }
+
+  if (settingsMemoryModelPreset && settingsMemoryModelCustom) {
+    settingsMemoryModelPreset.addEventListener('change', (e) => {
+      if (e.target.value === 'custom') {
+        settingsMemoryModelCustom.classList.remove('hidden');
+      } else {
+        settingsMemoryModelCustom.classList.add('hidden');
       }
     });
   }
@@ -1131,13 +1608,26 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  function setMemoryProviderCard(provider) {
+    activeMemoryProvider = provider || 'inherit';
+
+    if (cardMemInherit) cardMemInherit.classList.toggle('active', activeMemoryProvider === 'inherit');
+    if (cardMemOpenrouter) cardMemOpenrouter.classList.toggle('active', activeMemoryProvider === 'openrouter');
+    if (cardMemDeepinfra) cardMemDeepinfra.classList.toggle('active', activeMemoryProvider === 'deepinfra');
+
+    if (groupMemoryModel) {
+      groupMemoryModel.style.display = (activeMemoryProvider === 'openrouter' || activeMemoryProvider === 'deepinfra') ? 'block' : 'none';
+    }
+  }
+
   async function openSettingsModal() {
     try {
       const res = await fetch('/api/settings');
       const data = await res.json();
       if (data.success && data.settings) {
         const s = data.settings;
-        setProviderCard(s.provider || 'openrouter');
+        activeProvider = s.provider || 'openrouter';
+        setProviderCard(activeProvider);
         const modelVal = s.model || 'sao10k/l3.3-euryale-70b';
 
         let matched = false;
@@ -1161,9 +1651,47 @@ document.addEventListener('DOMContentLoaded', () => {
         settingsTemp.value = temp;
         tempValDisplay.textContent = parseFloat(temp).toFixed(2);
 
+        const freqPen = s.frequencyPenalty !== undefined ? s.frequencyPenalty : 0.65;
+        if (settingsFreqPenalty) settingsFreqPenalty.value = freqPen;
+        if (freqPenaltyDisplay) freqPenaltyDisplay.textContent = parseFloat(freqPen).toFixed(2);
+
+        const presPen = s.presencePenalty !== undefined ? s.presencePenalty : 0.45;
+        if (settingsPresencePenalty) settingsPresencePenalty.value = presPen;
+        if (presencePenaltyDisplay) presencePenaltyDisplay.textContent = parseFloat(presPen).toFixed(2);
+
+        const repPen = s.repetitionPenalty !== undefined ? s.repetitionPenalty : 1.18;
+        if (settingsRepPenalty) settingsRepPenalty.value = repPen;
+        if (repPenaltyDisplay) repPenaltyDisplay.textContent = parseFloat(repPen).toFixed(2);
+
         const budget = s.contextBudget !== undefined ? s.contextBudget : 6000;
         if (settingsContextBudget) settingsContextBudget.value = budget;
         if (contextBudgetDisplay) contextBudgetDisplay.textContent = parseInt(budget, 10);
+
+        const memBudget = s.memoryBudget !== undefined ? s.memoryBudget : 5000;
+        if (settingsMemoryBudget) settingsMemoryBudget.value = memBudget;
+        if (memoryBudgetDisplay) memoryBudgetDisplay.textContent = parseInt(memBudget, 10);
+
+        activeMemoryProvider = s.memoryProvider || 'inherit';
+        setMemoryProviderCard(activeMemoryProvider);
+        const memModelVal = s.memoryModel || 'nvidia/nemotron-3-ultra-550b-a55b:free';
+
+        if (settingsMemoryModelPreset) {
+          let memMatched = false;
+          for (let i = 0; i < settingsMemoryModelPreset.options.length; i++) {
+            if (settingsMemoryModelPreset.options[i].value === memModelVal) {
+              settingsMemoryModelPreset.selectedIndex = i;
+              memMatched = true;
+              break;
+            }
+          }
+          if (!memMatched) {
+            settingsMemoryModelPreset.value = 'custom';
+            settingsMemoryModelCustom.value = memModelVal;
+            settingsMemoryModelCustom.classList.remove('hidden');
+          } else {
+            settingsMemoryModelCustom.classList.add('hidden');
+          }
+        }
       }
     } catch (err) {
       console.error('Fetch settings error:', err);
@@ -1180,8 +1708,16 @@ document.addEventListener('DOMContentLoaded', () => {
     if (chosenModel === 'custom') {
       chosenModel = settingsModelCustom.value.trim();
       if (!chosenModel) {
-        alert('Please enter a valid custom model identifier.');
+        console.warn('Please enter a valid custom model identifier.');
         return;
+      }
+    }
+
+    let chosenMemoryModel = settingsMemoryModelPreset ? settingsMemoryModelPreset.value : 'nvidia/nemotron-3-ultra-550b-a55b:free';
+    if (chosenMemoryModel === 'custom' && settingsMemoryModelCustom) {
+      chosenMemoryModel = settingsMemoryModelCustom.value.trim();
+      if (!chosenMemoryModel) {
+        chosenMemoryModel = 'nvidia/nemotron-3-ultra-550b-a55b:free';
       }
     }
 
@@ -1189,7 +1725,13 @@ document.addEventListener('DOMContentLoaded', () => {
       provider: activeProvider,
       model: chosenModel,
       temperature: parseFloat(settingsTemp.value),
-      contextBudget: settingsContextBudget ? parseInt(settingsContextBudget.value, 10) : 6000
+      frequencyPenalty: settingsFreqPenalty ? parseFloat(settingsFreqPenalty.value) : 0.65,
+      presencePenalty: settingsPresencePenalty ? parseFloat(settingsPresencePenalty.value) : 0.45,
+      repetitionPenalty: settingsRepPenalty ? parseFloat(settingsRepPenalty.value) : 1.18,
+      contextBudget: settingsContextBudget ? parseInt(settingsContextBudget.value, 10) : 6000,
+      memoryBudget: settingsMemoryBudget ? parseInt(settingsMemoryBudget.value, 10) : 5000,
+      memoryProvider: activeMemoryProvider,
+      memoryModel: chosenMemoryModel
     };
 
     try {
