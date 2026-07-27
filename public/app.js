@@ -1625,11 +1625,12 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
       LocalDB.addMessage(personaId, finalAssistantMsg);
 
       const allMsgs = LocalDB.getMessages(personaId);
-      const lastSyncedCount = persona.lastSyncedMessageCount || 0;
+      const updatedPersona = LocalDB.getPersona(personaId) || persona;
+      const lastSyncedCount = updatedPersona.lastSyncedMessageCount || 0;
       const msgsSinceSync = Math.max(allMsgs.length - lastSyncedCount, 0);
 
       if (msgsSinceSync >= 6) {
-        triggerMemorySummarization(persona, allMsgs, settings);
+        triggerMemorySummarization(updatedPersona, allMsgs, settings);
       } else {
         const turnsLeft = 6 - msgsSinceSync;
         logEvent('MEMORY', `Turn ${allMsgs.length} completed. Messages since last sync: ${msgsSinceSync}/6. Next auto-summarization in ${turnsLeft} turn(s).`);
