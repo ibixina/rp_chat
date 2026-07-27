@@ -439,19 +439,6 @@ body, html {
   color: #53bdeb;
 }
 
-/* Image Constraints inside Chat Feed */
-#chat-feed img,
-.message-bubble img,
-.message-text img,
-#active-chat-view img {
-  max-width: 100% !important;
-  max-height: 360px !important;
-  border-radius: 8px !important;
-  object-fit: contain !important;
-  display: block;
-  margin: 6px 0;
-}
-
 /* Ephemeral / Ghost Streaming Message Bubble */
 .message-bubble.streaming-ghost {
   opacity: 0.88;
