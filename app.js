@@ -1659,6 +1659,7 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
       document.getElementById('form-description').value = persona.description || '';
       document.getElementById('form-first-message').value = persona.firstMessage || '';
       formAvatarPreview.src = persona.avatarUrl || './uploads/default-avatar.svg';
+      formAvatarPreview.onerror = () => { formAvatarPreview.src = './uploads/default-avatar.svg'; };
 
       modalTitle.textContent = 'Edit Contact';
       btnDeletePersona.classList.remove('hidden');
