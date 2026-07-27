@@ -1182,15 +1182,21 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
 
     const timeStr = msg.timestamp
       ? new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      : '';
+      : 'Just now';
+
+    let statusIcon = '';
+    if (msg.sender === 'user') {
+      const isRead = msg.isRead ? 'color: #53bdeb;' : 'color: rgba(241, 241, 241, 0.6);';
+      const checkClass = msg.isRead ? 'fa-check-double' : 'fa-check';
+      statusIcon = `<i class="fa-solid ${checkClass} msg-status-check" style="${isRead}"></i>`;
+    }
 
     bubble.innerHTML = `
-      <div class="bubble-content">
-        <div class="message-text" data-raw-text="${escapeHtml(msg.text)}">${formatMessageText(msg.text)}</div>
-        <div class="bubble-footer">
-          <span class="message-time">${timeStr}</span>
-        </div>
-        ${renderReactionsHtml(msg.reactions)}
+      <div class="message-text" data-raw-text="${escapeHtml(msg.text)}" title="Double-click to edit text">${formatMessageText(msg.text)}</div>
+      ${renderReactionsHtml(msg.reactions)}
+      <div class="message-meta">
+        <span>${timeStr}</span>
+        ${statusIcon}
       </div>
 
       <div class="message-actions-toolbar">
