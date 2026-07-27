@@ -1270,7 +1270,6 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
       : '';
 
     bubble.innerHTML = `
-      ${isPersona ? `<img src="${persona?.avatarUrl || './uploads/default-avatar.svg'}" class="bubble-avatar" alt="Avatar">` : ''}
       <div class="bubble-content">
         <div class="message-text" data-raw-text="${escapeHtml(msg.text)}">${formatMessageText(msg.text)}</div>
         <div class="bubble-footer">
