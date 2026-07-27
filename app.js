@@ -596,6 +596,96 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
   const fileRestoreBackup = document.getElementById('file-restore-backup');
   const fileImportPerchance = document.getElementById('file-import-perchance');
 
+  // Import Modal & Header Trigger
+  const importModal = document.getElementById('import-modal');
+  const btnImportHeader = document.getElementById('btn-import-header');
+  const btnCloseImportModal = document.getElementById('btn-close-import-modal');
+  const btnCancelImportModal = document.getElementById('btn-cancel-import-modal');
+
+  const modalFileImportPerchance = document.getElementById('modal-file-import-perchance');
+  const modalFileRestoreBackup = document.getElementById('modal-file-restore-backup');
+  const modalBtnExportBackup = document.getElementById('modal-btn-export-backup');
+  const modalBtnResetStorage = document.getElementById('modal-btn-reset-storage');
+
+  if (btnImportHeader) btnImportHeader.addEventListener('click', () => showModal(importModal));
+  if (btnCloseImportModal) btnCloseImportModal.addEventListener('click', () => hideModal(importModal));
+  if (btnCancelImportModal) btnCancelImportModal.addEventListener('click', () => hideModal(importModal));
+
+  if (modalFileImportPerchance) {
+    modalFileImportPerchance.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+        try {
+          const json = JSON.parse(evt.target.result);
+          const imported = LocalDB.importPerchance(json);
+          loadPersonas();
+          hideModal(importModal);
+          if (imported.length > 0) {
+            selectPersona(imported[0].persona.id);
+            alert(`Successfully imported ${imported.length} character(s)!`);
+          }
+        } catch (err) {
+          alert('Perchance import failed: ' + err.message);
+        }
+      };
+      reader.readAsText(file);
+    });
+  }
+
+  if (modalFileRestoreBackup) {
+    modalFileRestoreBackup.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (evt) => {
+        try {
+          LocalDB.importFullBackup(evt.target.result);
+          loadPersonas();
+          hideModal(importModal);
+          if (personas.length > 0) selectPersona(personas[0].id);
+          alert('Backup restored successfully!');
+        } catch (err) {
+          alert('Restore failed: ' + err.message);
+        }
+      };
+      reader.readAsText(file);
+    });
+  }
+
+  if (modalBtnExportBackup) {
+    modalBtnExportBackup.addEventListener('click', () => {
+      const jsonStr = LocalDB.exportFullBackup();
+      const blob = new Blob([jsonStr], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `persona_chat_backup_${Date.now()}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+  }
+
+  if (modalBtnResetStorage) {
+    modalBtnResetStorage.addEventListener('click', () => {
+      showConfirmDialog({
+        title: 'Reset Local Storage',
+        message: 'Are you sure you want to clear all local browser data and reset to clean sample contact? This cannot be undone.',
+        confirmText: 'Reset All Data',
+        danger: true,
+        onConfirm: async () => {
+          localStorage.removeItem('persona_db');
+          await LocalDB.init();
+          activePersonaId = null;
+          hideModal(importModal);
+          loadPersonas();
+          alert('Browser data reset to default sample contact.');
+        }
+      });
+    });
+  }
+
   if (btnExportBackup) {
     btnExportBackup.addEventListener('click', () => {
       const jsonStr = LocalDB.exportFullBackup();

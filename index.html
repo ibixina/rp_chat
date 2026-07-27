@@ -23,6 +23,9 @@
           <i class="fa-solid fa-circle-user"></i>
         </div>
         <div class="header-actions">
+          <button id="btn-import-header" title="Import Characters or Restore Backup" class="icon-btn">
+            <i class="fa-solid fa-file-import"></i>
+          </button>
           <button id="btn-toggle-sidebar" title="Fold Side Panel" class="icon-btn">
             <i class="fa-solid fa-bars-staggered"></i>
           </button>
@@ -367,6 +370,78 @@
       <div class="modal-footer">
         <button type="button" class="btn btn-secondary" id="btn-cancel-settings">Cancel</button>
         <button type="button" class="btn btn-primary" id="btn-save-settings">Save Settings</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: IMPORT & DATA MANAGEMENT -->
+  <div class="modal-overlay hidden" id="import-modal" style="z-index: 1150;">
+    <div class="modal-card" style="max-width: 480px;">
+      <div class="modal-header">
+        <h3><i class="fa-solid fa-file-import" style="color: var(--accent-green);"></i> Import & Data Management</h3>
+        <button id="btn-close-import-modal" class="close-btn">&times;</button>
+      </div>
+      <div class="modal-body" style="padding: 20px;">
+        <div style="display: flex; flex-direction: column; gap: 14px;">
+
+          <!-- Option 1: Import Perchance -->
+          <div style="border: 1px solid var(--border-color); border-radius: 8px; padding: 14px; background: var(--bg-header);">
+            <div style="font-weight: 600; font-size: 14px; color: var(--text-main); margin-bottom: 4px; display: flex; align-items: center; gap: 8px;">
+              <i class="fa-solid fa-masks-theater" style="color: var(--accent-green);"></i> Import Perchance Characters
+            </div>
+            <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 10px; line-height: 1.4;">
+              Upload a <code>perchance-characters-export-*.json</code> file to import character profiles, conversation history, and avatars.
+            </p>
+            <label class="btn btn-primary" style="font-size: 12px; padding: 8px 14px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;">
+              <i class="fa-solid fa-upload"></i> Select Perchance JSON File
+              <input type="file" id="modal-file-import-perchance" accept=".json" style="display: none;">
+            </label>
+          </div>
+
+          <!-- Option 2: Restore Backup -->
+          <div style="border: 1px solid var(--border-color); border-radius: 8px; padding: 14px; background: var(--bg-header);">
+            <div style="font-weight: 600; font-size: 14px; color: var(--text-main); margin-bottom: 4px; display: flex; align-items: center; gap: 8px;">
+              <i class="fa-solid fa-rotate-left" style="color: var(--accent-green);"></i> Restore App Backup
+            </div>
+            <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 10px; line-height: 1.4;">
+              Restore all personas, settings, and chat logs from a previously downloaded <code>persona_chat_backup_*.json</code> file.
+            </p>
+            <label class="btn btn-secondary" style="font-size: 12px; padding: 8px 14px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;">
+              <i class="fa-solid fa-file-arrow-up"></i> Select Backup JSON File
+              <input type="file" id="modal-file-restore-backup" accept=".json" style="display: none;">
+            </label>
+          </div>
+
+          <!-- Option 3: Export Backup -->
+          <div style="border: 1px solid var(--border-color); border-radius: 8px; padding: 14px; background: var(--bg-header);">
+            <div style="font-weight: 600; font-size: 14px; color: var(--text-main); margin-bottom: 4px; display: flex; align-items: center; gap: 8px;">
+              <i class="fa-solid fa-download" style="color: var(--accent-green);"></i> Export Full App Backup
+            </div>
+            <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 10px; line-height: 1.4;">
+              Download a complete JSON backup of all your current contacts, chat histories, and settings.
+            </p>
+            <button type="button" class="btn btn-secondary" id="modal-btn-export-backup" style="font-size: 12px; padding: 8px 14px; display: inline-flex; align-items: center; gap: 6px;">
+              <i class="fa-solid fa-download"></i> Download Backup JSON
+            </button>
+          </div>
+
+          <!-- Option 4: Reset Local Storage -->
+          <div style="border: 1px solid rgba(234, 67, 53, 0.3); border-radius: 8px; padding: 14px; background: rgba(234, 67, 53, 0.05);">
+            <div style="font-weight: 600; font-size: 14px; color: #ea4335; margin-bottom: 4px; display: flex; align-items: center; gap: 8px;">
+              <i class="fa-solid fa-trash-arrow-up"></i> Reset Browser Storage
+            </div>
+            <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 10px; line-height: 1.4;">
+              Clear cached data from your browser's LocalStorage and reset to clean sample contact.
+            </p>
+            <button type="button" class="btn btn-danger" id="modal-btn-reset-storage" style="font-size: 12px; padding: 8px 14px; background-color: #ea4335; color: #fff; display: inline-flex; align-items: center; gap: 6px;">
+              <i class="fa-solid fa-trash"></i> Reset All Local Data
+            </button>
+          </div>
+
+        </div>
+      </div>
+      <div class="modal-footer" style="padding: 12px 20px;">
+        <button type="button" class="btn btn-secondary" id="btn-cancel-import-modal">Close</button>
       </div>
     </div>
   </div>
