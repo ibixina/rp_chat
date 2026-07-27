@@ -1030,12 +1030,7 @@ body, html {
 
 .crop-viewport img {
   position: absolute;
-  top: 50%;
-  left: 50%;
-  transform-origin: center center;
   pointer-events: auto;
-  max-width: none;
-  max-height: none;
   user-select: none;
   -webkit-user-drag: none;
 }

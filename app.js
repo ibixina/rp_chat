@@ -765,23 +765,52 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
   const btnResetCrop = document.getElementById('btn-reset-crop');
   const btnApplyCrop = document.getElementById('btn-apply-crop');
 
-  let cropState = { scale: 1, offsetX: 0, offsetY: 0, isDragging: false, startX: 0, startY: 0 };
+  let cropState = { baseWidth: 260, baseHeight: 260, zoom: 1, offsetX: 0, offsetY: 0, isDragging: false, startX: 0, startY: 0 };
 
   function openCropModal(imageSrc) {
     cropImage.src = imageSrc;
-    cropState = { scale: 1, offsetX: 0, offsetY: 0, isDragging: false, startX: 0, startY: 0 };
-    cropZoomSlider.value = 1;
-    applyCropTransform();
-    showModal(avatarCropModal);
+    cropImage.onload = () => {
+      const vpSize = 260;
+      const nw = cropImage.naturalWidth || 300;
+      const nh = cropImage.naturalHeight || 300;
+
+      const coverScale = Math.max(vpSize / nw, vpSize / nh);
+      cropState = {
+        baseWidth: nw * coverScale,
+        baseHeight: nh * coverScale,
+        zoom: 1,
+        offsetX: 0,
+        offsetY: 0,
+        isDragging: false,
+        startX: 0,
+        startY: 0
+      };
+
+      if (cropZoomSlider) {
+        cropZoomSlider.min = "0.5";
+        cropZoomSlider.max = "3";
+        cropZoomSlider.step = "0.01";
+        cropZoomSlider.value = "1";
+      }
+
+      applyCropTransform();
+      showModal(avatarCropModal);
+    };
   }
 
   function applyCropTransform() {
-    cropImage.style.transform = `translate(${cropState.offsetX}px, ${cropState.offsetY}px) scale(${cropState.scale})`;
+    const w = cropState.baseWidth * cropState.zoom;
+    const h = cropState.baseHeight * cropState.zoom;
+
+    cropImage.style.width = `${w}px`;
+    cropImage.style.height = `${h}px`;
+    cropImage.style.left = `calc(50% - ${w / 2}px + ${cropState.offsetX}px)`;
+    cropImage.style.top = `calc(50% - ${h / 2}px + ${cropState.offsetY}px)`;
   }
 
   if (cropZoomSlider) {
     cropZoomSlider.addEventListener('input', (e) => {
-      cropState.scale = parseFloat(e.target.value);
+      cropState.zoom = parseFloat(e.target.value);
       applyCropTransform();
     });
   }
@@ -790,8 +819,8 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
     cropViewport.addEventListener('wheel', (e) => {
       e.preventDefault();
       const delta = e.deltaY < 0 ? 0.05 : -0.05;
-      cropState.scale = Math.min(Math.max(1, cropState.scale + delta), 4);
-      cropZoomSlider.value = cropState.scale;
+      cropState.zoom = Math.min(Math.max(0.5, cropState.zoom + delta), 3);
+      if (cropZoomSlider) cropZoomSlider.value = cropState.zoom;
       applyCropTransform();
     }, { passive: false });
 
@@ -819,8 +848,10 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
 
   if (btnResetCrop) {
     btnResetCrop.addEventListener('click', () => {
-      cropState = { scale: 1, offsetX: 0, offsetY: 0, isDragging: false, startX: 0, startY: 0 };
-      cropZoomSlider.value = 1;
+      cropState.zoom = 1;
+      cropState.offsetX = 0;
+      cropState.offsetY = 0;
+      if (cropZoomSlider) cropZoomSlider.value = 1;
       applyCropTransform();
     });
   }
@@ -841,10 +872,10 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
       const scaleX = cropImage.naturalWidth / imgRect.width;
       const scaleY = cropImage.naturalHeight / imgRect.height;
 
-      const cropX = (vpRect.left - imgRect.left) * scaleX;
-      const cropY = (vpRect.top - imgRect.top) * scaleY;
-      const cropW = vpRect.width * scaleX;
-      const cropH = vpRect.height * scaleY;
+      const cropX = Math.max(0, (vpRect.left - imgRect.left) * scaleX);
+      const cropY = Math.max(0, (vpRect.top - imgRect.top) * scaleY);
+      const cropW = Math.min(cropImage.naturalWidth - cropX, vpRect.width * scaleX);
+      const cropH = Math.min(cropImage.naturalHeight - cropY, vpRect.height * scaleY);
 
       ctx.drawImage(cropImage, cropX, cropY, cropW, cropH, 0, 0, 300, 300);
 
