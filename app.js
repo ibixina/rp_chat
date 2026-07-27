@@ -1,4 +1,14 @@
 document.addEventListener('DOMContentLoaded', () => {
+  // Structured Console Logger
+  function logEvent(tag, message, data = null) {
+    const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    if (data !== null && data !== undefined) {
+      console.log(`%c[${timestamp}] %c[${tag}] %c${message}`, 'color: #8696a0;', 'color: #00a884; font-weight: bold;', 'color: #e9edef;', data);
+    } else {
+      console.log(`%c[${timestamp}] %c[${tag}] %c${message}`, 'color: #8696a0;', 'color: #00a884; font-weight: bold;', 'color: #e9edef;');
+    }
+  }
+
   // -------------------------------------------------------------
   // Storage Adapter (Pure Client-Side Browser Storage)
   // -------------------------------------------------------------
@@ -355,6 +365,8 @@ ${persona.storyMemory || "No prior narrative memory recorded."}
       })
     };
 
+    logEvent('AI_INFERENCE', `Sending stream completion request via ${provider.toUpperCase()}`, { model, temperature, messageCount: promptMessages.length });
+
     const response = await fetch(endpoint, {
       method: 'POST',
       headers,
@@ -370,6 +382,7 @@ ${persona.storyMemory || "No prior narrative memory recorded."}
       } catch (e) {
         msg = errText || msg;
       }
+      logEvent('AI_INFERENCE', `API Error Response: ${msg}`, { status: response.status });
       throw new Error(msg);
     }
 
@@ -405,6 +418,7 @@ ${persona.storyMemory || "No prior narrative memory recorded."}
       }
     }
 
+    logEvent('AI_INFERENCE', `Stream completion finished successfully`, { totalCharacters: fullText.length });
     return fullText;
   }
 
@@ -414,6 +428,8 @@ ${persona.storyMemory || "No prior narrative memory recorded."}
         ? settings.memoryProvider.toLowerCase()
         : (settings.provider || 'openrouter').toLowerCase();
       let model = settings.memoryModel || (provider === 'deepinfra' ? 'NousResearch/Hermes-3-Llama-3.1-70B' : 'nvidia/nemotron-3-ultra-550b-a55b:free');
+
+      logEvent('MEMORY', `Triggering memory auto-summarization for ${persona.name}`, { provider, model, totalTurns: messages.length });
 
       const memPrompt = `Below is the existing story memory log and recent conversational turn history between user and ${persona.name}.
 Analyze the scene progression, physical details, emotional development, and key facts, and produce an updated, comprehensive Markdown Story Memory Log with sections [CURRENT SCENE & LOCATION], [RELATIONSHIP & EMOTIONAL DYNAMIC], [PENDING HOOKS & UNRESOLVED PLANS], and [KEY NARRATIVE MILESTONES & ESTABLISHED FACTS]. Be extremely detailed and preserve all continuity markers.
@@ -440,8 +456,10 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
         const nowIso = new Date().toISOString();
         LocalDB.updateMemory(persona.id, newMemory.trim());
         LocalDB.updatePersona(persona.id, { lastMemorySyncTime: nowIso });
+        logEvent('MEMORY', `Story Memory auto-summarized and saved for ${persona.name}`, { memoryLength: newMemory.trim().length });
       }
     } catch (err) {
+      logEvent('MEMORY', `Memory auto-summarization skipped: ${err.message}`);
       console.warn('Memory auto-summarization skipped:', err.message);
     }
   }
