@@ -148,6 +148,18 @@ document.addEventListener('DOMContentLoaded', () => {
       return personaData;
     },
 
+    updatePersona(personaId, updates) {
+      const raw = this.getRaw();
+      raw.personas = raw.personas || [];
+      const idx = raw.personas.findIndex(p => p.id === personaId);
+      if (idx > -1) {
+        raw.personas[idx] = { ...raw.personas[idx], ...updates };
+        this.saveRaw(raw);
+        return raw.personas[idx];
+      }
+      return null;
+    },
+
     deletePersona(id) {
       const raw = this.getRaw();
       raw.personas = (raw.personas || []).filter(p => p.id !== id);
