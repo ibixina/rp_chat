@@ -9,6 +9,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  const MEMORY_AUTO_SYNC_INTERVAL = 12;
+
   // -------------------------------------------------------------
   // Storage Adapter (Pure Client-Side Browser Storage)
   // -------------------------------------------------------------
@@ -1650,11 +1652,11 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
       const lastSyncedCount = updatedPersona.lastSyncedMessageCount || 0;
       const msgsSinceSync = Math.max(allMsgs.length - lastSyncedCount, 0);
 
-      if (msgsSinceSync >= 6) {
+      if (msgsSinceSync >= MEMORY_AUTO_SYNC_INTERVAL) {
         triggerMemorySummarization(updatedPersona, allMsgs, settings);
       } else {
-        const turnsLeft = 6 - msgsSinceSync;
-        logEvent('MEMORY', `Turn ${allMsgs.length} completed. Messages since last sync: ${msgsSinceSync}/6. Next auto-summarization in ${turnsLeft} turn(s).`);
+        const msgsLeft = MEMORY_AUTO_SYNC_INTERVAL - msgsSinceSync;
+        logEvent('MEMORY', `Message ${allMsgs.length} completed. Messages since last sync: ${msgsSinceSync}/${MEMORY_AUTO_SYNC_INTERVAL}. Next auto-summarization in ${msgsLeft} message(s).`);
       }
 
     } catch (err) {
@@ -1824,7 +1826,7 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
       const totalMsgs = messages.length;
       const lastSyncedCount = persona?.lastSyncedMessageCount || 0;
       const msgsSinceSync = Math.max(totalMsgs - lastSyncedCount, 0);
-      const turnsRemaining = Math.max(6 - msgsSinceSync, 0);
+      const msgsRemaining = Math.max(MEMORY_AUTO_SYNC_INTERVAL - msgsSinceSync, 0);
 
       const lastSyncEl = document.getElementById('memory-last-sync-time');
       const turnsLeftEl = document.getElementById('memory-turns-remaining');
@@ -1832,11 +1834,11 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
       if (lastSyncEl) {
         lastSyncEl.textContent = persona?.lastMemorySyncTime
           ? new Date(persona.lastMemorySyncTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', month: 'short', day: 'numeric' })
-          : (totalMsgs >= 6 ? 'Initial auto-sync' : 'Never');
+          : (totalMsgs >= MEMORY_AUTO_SYNC_INTERVAL ? 'Initial auto-sync' : 'Never');
       }
 
       if (turnsLeftEl) {
-        turnsLeftEl.textContent = turnsRemaining === 0 ? 'Syncing on next turn' : `${turnsRemaining} turn${turnsRemaining === 1 ? '' : 's'} left`;
+        turnsLeftEl.textContent = msgsRemaining === 0 ? 'Syncing on next message' : `${msgsRemaining} message${msgsRemaining === 1 ? '' : 's'} left`;
       }
 
       showModal(memoryModal);
