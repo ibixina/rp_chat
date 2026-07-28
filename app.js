@@ -480,23 +480,17 @@ ${persona.storyMemory || "No prior narrative memory recorded."}
 
       logEvent('MEMORY', `Triggering memory auto-summarization for ${persona.name}`, { provider, model, totalTurns: messages.length });
 
-      const memPrompt = `Below is the existing story memory log and recent conversational turn history between User and ${persona.name}.
-
-CRITICAL CONTINUITY & INCREMENTAL UPDATE RULES:
-1. INCREMENTAL CUMULATIVE LOG: Do NOT rewrite, discard, or rephrase existing established facts or past milestones. Treat [KEY NARRATIVE MILESTONES & ESTABLISHED FACTS] and [RELATIONSHIP & EMOTIONAL DYNAMIC] as persistent cumulative records. ONLY add new facts/milestones or modify entries if recent events directly alter them.
-2. UPDATE IMMEDIATE STATE: Update [CURRENT SCENE & LOCATION] and [PENDING HOOKS & UNRESOLVED PLANS] to reflect the latest scene state and immediate goals, while retaining ongoing plans.
-3. STRICT FACTUALITY: Summarize ONLY physical details, items, locations, and actions explicitly stated in the conversation history or existing memory. Never invent unmentioned distances, missing items, or dramatic backstories.
-4. GEAR & ITEM ACCURACY: If the User states they have items, backpacks, stoves, or gear on hand, treat that as absolute ground truth. Never claim items are missing or miles away unless explicitly stated in the text.
-5. NO SPECULATIVE EXTRAPOLATION: Do not predict future scene beats or invent unwritten actions (e.g. climbing waterfalls naked, losing gear, or hiking miles away) unless explicitly written in the messages.
+      const memPrompt = `Below is the existing story memory log and recent conversational turn history between user and ${persona.name}.
+Analyze the scene progression, physical details, emotional development, and key facts, and produce an updated, comprehensive Markdown Story Memory Log with sections [CURRENT SCENE & LOCATION], [RELATIONSHIP & EMOTIONAL DYNAMIC], [PENDING HOOKS & UNRESOLVED PLANS], and [KEY NARRATIVE MILESTONES & ESTABLISHED FACTS]. Be extremely detailed and preserve all continuity markers.
 
 EXISTING MEMORY:
 ${persona.storyMemory || 'None'}
 
 RECENT MESSAGES:
-${messages.slice(-16).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\n')}`;
+${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\n')}`;
 
       const promptMsgs = [
-        { role: 'system', content: `You are an objective, strict story continuity writer for ${persona.name}. You perform incremental, cumulative memory updates. Preserve all existing established facts and milestones without discarding or rewriting past history.` },
+        { role: 'system', content: 'You are an expert story continuity writer creating structured memory summaries for roleplay.' },
         { role: 'user', content: memPrompt }
       ];
 
