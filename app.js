@@ -1330,17 +1330,20 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
   function formatMessageText(str) {
     if (!str) return '';
     let text = str.trim();
-    text = text.replace(/^""\s*/, '').replace(/^"\s*(?=[a-z\[])/i, '');
+    text = text.replace(/^""\s*/, '').replace(/^"\s*(?=[a-z\[\*])/i, '');
     let escaped = escapeHtml(text);
 
-    // Format **bold** text
+    // 1. Format **bold** text
     escaped = escaped.replace(/\*\*([^*]+(?:\*[^*]+)*?)\*\*/g, '<strong>$1</strong>');
 
-    // Format [action/narration] blocks
-    escaped = escaped.replace(/\[([^\]]+)\]/g, '<span class="message-action">$1</span>');
+    // 2. Format [action/narration] blocks (brackets)
+    escaped = escaped.replace(/\[([^\]]+)\]/g, (match, inner) => {
+      const formattedInner = inner.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+      return `<span class="message-action">${formattedInner}</span>`;
+    });
 
-    // Format *italic* text
-    escaped = escaped.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+    // 3. Format *action/narration* blocks (asterisks)
+    escaped = escaped.replace(/\*([^*]+)\*/g, '<span class="message-action">$1</span>');
 
     escaped = escaped.replace(/\n/g, '<br>');
     return escaped;

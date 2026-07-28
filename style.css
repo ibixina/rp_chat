@@ -988,13 +988,13 @@ body, html {
 }
 
 .message-action em {
-  font-style: normal;
-  font-weight: 600;
-  color: #e2f1ff;
+  font-style: italic;
+  font-weight: 500;
+  color: #a4d4ff;
 }
 
 .message-action strong {
-  font-style: normal;
+  font-style: italic;
   font-weight: 700;
   color: #ffffff;
 }
@@ -1004,9 +1004,14 @@ body, html {
   font-style: italic;
 }
 
-.message-bubble.user .message-action em,
+.message-bubble.user .message-action em {
+  font-style: italic;
+  font-weight: 500;
+  color: #cce6ff;
+}
+
 .message-bubble.user .message-action strong {
-  font-style: normal;
+  font-style: italic;
   font-weight: 700;
   color: #ffffff;
 }
