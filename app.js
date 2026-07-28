@@ -1509,7 +1509,7 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
     if (bubble.classList.contains('editing')) return;
     bubble.classList.add('editing');
 
-    const originalText = msg.text;
+    const originalText = textEl.dataset.rawText || msg.text;
     textEl.textContent = originalText;
     textEl.contentEditable = 'true';
     textEl.classList.add('message-text-editing');
