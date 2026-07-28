@@ -1327,10 +1327,24 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
   // -------------------------------------------------------------
   // Message Bubbles & Actions
   // -------------------------------------------------------------
+  function cleanMarkdownSpam(text) {
+    // Strip bold wrapper on full brackets: [**text**] or [**text]
+    text = text.replace(/\[\*\*/g, '[').replace(/\*\*\]/g, ']');
+
+    // Clean stuttering ** bold glitch (e.g. '**word **word')
+    return text.split('\n').map(line => {
+      if ((line.match(/\*\*/g) || []).length >= 4) {
+        return line.replace(/\*\*([^\*\s]+)\s*\*\*/g, '$1 ').replace(/\*\*/g, '');
+      }
+      return line;
+    }).join('\n');
+  }
+
   function formatMessageText(str) {
     if (!str) return '';
     let text = str.trim();
     text = text.replace(/^""\s*/, '').replace(/^"\s*(?=[a-z\[])/i, '');
+    text = cleanMarkdownSpam(text);
     let escaped = escapeHtml(text);
 
     // 1. Format **bold** text
