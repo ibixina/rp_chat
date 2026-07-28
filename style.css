@@ -987,9 +987,28 @@ body, html {
   display: inline;
 }
 
+.message-action em {
+  font-style: normal;
+  font-weight: 600;
+  color: #e2f1ff;
+}
+
+.message-action strong {
+  font-style: normal;
+  font-weight: 700;
+  color: #ffffff;
+}
+
 .message-bubble.user .message-action {
   color: #a8d8fc;
   font-style: italic;
+}
+
+.message-bubble.user .message-action em,
+.message-bubble.user .message-action strong {
+  font-style: normal;
+  font-weight: 700;
+  color: #ffffff;
 }
 
 /* User Avatar & Settings Modal Styles */
