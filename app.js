@@ -376,7 +376,7 @@ ${persona.storyMemory || "No prior narrative memory recorded."}
       temperature: settings.temperature !== undefined ? parseFloat(settings.temperature) : 0.68,
       frequency_penalty: settings.frequencyPenalty !== undefined ? parseFloat(settings.frequencyPenalty) : 0.65,
       presence_penalty: settings.presencePenalty !== undefined ? parseFloat(settings.presencePenalty) : 0.45,
-      max_tokens: 1200,
+      max_tokens: settings.maxTokens || settings.max_tokens || (settings.isMemory ? (settings.memoryBudget || 5000) : 1200),
       stream: true,
       ...(provider === 'openrouter' ? {
         extra_body: {
@@ -498,7 +498,9 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
         ...settings,
         provider,
         model,
-        temperature: 0.3
+        temperature: 0.3,
+        isMemory: true,
+        maxTokens: settings.memoryBudget || 5000
       }, () => {});
 
       if (newMemory && newMemory.trim()) {
