@@ -1333,15 +1333,6 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
     text = text.replace(/^""\s*/, '').replace(/^"\s*(?=[a-z*])/i, '');
     let escaped = escapeHtml(text);
 
-    // 1. Clean orphan asterisks like "* " or " *"
-    escaped = escaped.replace(/(^|\s)\*{1,2}(\s|$)/g, '$1$2');
-
-    // 2. Format double asterisks **bold dialogue** first
-    escaped = escaped.replace(/\*\*([^*]+(?:\*[^*]+)*?)\*\*/g, (match, innerText) => {
-      return `<strong>${innerText}</strong>`;
-    });
-
-    // Helper to format single asterisk action content: preserve quoted dialogue as normal text
     function formatActionContent(innerText) {
       if (!innerText.includes('&quot;')) {
         return `<span class="message-action">${innerText}</span>`;
@@ -1357,15 +1348,34 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
       }).join('');
     }
 
-    // 3. Format single asterisk *action* second
-    escaped = escaped.replace(/\*([^*]+)\*/g, (match, innerText) => {
-      return formatActionContent(innerText);
-    });
+    // Process each line separately to avoid cross-line asterisk mismatches
+    escaped = escaped.split('\n').map(line => {
+      // Clean orphan asterisks like "* " or " *"
+      line = line.replace(/(^|\s)\*{1,2}(\s|$)/g, '$1$2');
 
-    // 4. Format unclosed asterisks for streaming chunks: *action until end of text/chunk
-    escaped = escaped.replace(/(^|\s)\*([^*<]+)$/g, (match, prefix, innerText) => prefix + formatActionContent(innerText));
+      // Format **bold** first
+      line = line.replace(/\*\*([^*]+(?:\*[^*]+)*?)\*\*/g, (m, inner) => {
+        return `<strong>${inner}</strong>`;
+      });
 
-    escaped = escaped.replace(/\n/g, '<br>');
+      // Check if entire line is wrapped in * ... * (RP action paragraph)
+      // Handles nested emphasis like: *She whispered *his name* softly.*
+      const fullLineMatch = line.match(/^\*(.+)\*$/);
+      if (fullLineMatch) {
+        const inner = fullLineMatch[1];
+        // Format nested *word* as emphasized within the action span
+        const formatted = inner.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+        return formatActionContent(formatted);
+      }
+
+      // Inline *action* within mixed lines (dialogue + action)
+      line = line.replace(/\*([^*]+)\*/g, (m, inner) => formatActionContent(inner));
+
+      // Unclosed asterisk for streaming: *action until end of line
+      line = line.replace(/(^|\s)\*([^*<]+)$/g, (m, prefix, inner) => prefix + formatActionContent(inner));
+
+      return line;
+    }).join('<br>');
     return escaped;
   }
 
