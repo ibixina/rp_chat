@@ -121,6 +121,11 @@ document.addEventListener('DOMContentLoaded', () => {
         let avatar = p.avatarUrl || './uploads/default-avatar.svg';
         if (avatar.startsWith('/uploads/')) avatar = '.' + avatar;
         p.avatarUrl = avatar;
+
+        const msgs = (raw.messages || {})[p.id] || [];
+        const lastMsg = msgs[msgs.length - 1];
+        const rawTs = lastMsg && lastMsg.timestamp ? new Date(lastMsg.timestamp).getTime() : (p.createdAt ? new Date(p.createdAt).getTime() : 0);
+        p.lastTimestamp = isNaN(rawTs) ? 0 : rawTs;
       }
       return p;
     },
@@ -1127,11 +1132,61 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
   if (btnCancelSettings) btnCancelSettings.addEventListener('click', () => hideModal(settingsModal));
 
   // -------------------------------------------------------------
-  // UI Rendering: Contact List
+  // UI Rendering: Contact List & Status
   // -------------------------------------------------------------
-  // -------------------------------------------------------------
-  // UI Rendering: Contact List
-  // -------------------------------------------------------------
+  const OFFLINE_THRESHOLD_MS = 60 * 60 * 1000; // 1 hour
+
+  function isPersonaOffline(persona) {
+    if (!persona) return true;
+    if (generatingPersonas[persona.id]) return false;
+
+    let lastTs = persona.lastTimestamp;
+    if (lastTs === undefined) {
+      const msgs = LocalDB.getMessages(persona.id) || [];
+      const lastMsg = msgs[msgs.length - 1];
+      const rawTs = lastMsg && lastMsg.timestamp ? new Date(lastMsg.timestamp).getTime() : (persona.createdAt ? new Date(persona.createdAt).getTime() : 0);
+      lastTs = isNaN(rawTs) ? 0 : rawTs;
+    }
+
+    if (!lastTs || lastTs <= 0) return true;
+    return (Date.now() - lastTs) > OFFLINE_THRESHOLD_MS;
+  }
+
+  function updateHeaderStatus(personaId) {
+    if (!personaId || personaId !== activePersonaId) return;
+
+    const persona = LocalDB.getPersona(personaId);
+    if (!persona) return;
+
+    const headerBadgeEl = document.getElementById('header-online-badge');
+
+    if (generatingPersonas[personaId]) {
+      currentStatusEl.textContent = 'typing...';
+      currentStatusEl.className = 'status-subtitle typing';
+      if (headerBadgeEl) {
+        headerBadgeEl.classList.remove('offline');
+        headerBadgeEl.title = 'Online';
+      }
+    } else {
+      const offline = isPersonaOffline(persona);
+      if (offline) {
+        currentStatusEl.textContent = 'offline';
+        currentStatusEl.className = 'status-subtitle offline';
+        if (headerBadgeEl) {
+          headerBadgeEl.classList.add('offline');
+          headerBadgeEl.title = 'Offline';
+        }
+      } else {
+        currentStatusEl.textContent = 'online';
+        currentStatusEl.className = 'status-subtitle';
+        if (headerBadgeEl) {
+          headerBadgeEl.classList.remove('offline');
+          headerBadgeEl.title = 'Online';
+        }
+      }
+    }
+  }
+
   function renderContactList(list) {
     contactListEl.innerHTML = '';
 
@@ -1143,15 +1198,16 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
     list.forEach(p => {
       const isSelected = p.id === activePersonaId;
       const isTyping = !!generatingPersonas[p.id];
+      const offline = isPersonaOffline(p);
 
       const item = document.createElement('div');
       item.className = `contact-item ${isSelected ? 'active' : ''}`;
       item.dataset.id = p.id;
 
       item.innerHTML = `
-        <div class="avatar-wrapper">
+        <div class="avatar-wrapper ${offline ? 'offline' : ''}">
           <img src="${p.avatarUrl || './uploads/default-avatar.svg'}" alt="${escapeHtml(p.name)}" class="contact-avatar" onerror="this.onerror=null; this.src='./uploads/default-avatar.svg';">
-          <span class="online-badge"></span>
+          <span class="online-badge ${offline ? 'offline' : ''}" title="${offline ? 'Offline' : 'Online'}"></span>
         </div>
         <div class="contact-details">
           <div class="contact-top-row">
@@ -1194,13 +1250,7 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
     currentAvatarEl.onerror = () => { currentAvatarEl.src = './uploads/default-avatar.svg'; };
     currentNameEl.textContent = persona.name;
 
-    if (generatingPersonas[personaId]) {
-      currentStatusEl.textContent = 'typing...';
-      currentStatusEl.className = 'status-subtitle typing';
-    } else {
-      currentStatusEl.textContent = 'online';
-      currentStatusEl.className = 'status-subtitle';
-    }
+    updateHeaderStatus(personaId);
 
     renderContactList(LocalDB.getPersonas());
     renderChatFeed(personaId);
@@ -1712,8 +1762,7 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
         assistantMsgBubble.classList.remove('streaming-ghost');
       }
       if (activePersonaId === personaId) {
-        currentStatusEl.textContent = 'online';
-        currentStatusEl.className = 'status-subtitle';
+        updateHeaderStatus(personaId);
         scrollToBottom();
       }
       renderContactList(LocalDB.getPersonas());
@@ -1742,8 +1791,7 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
 
     if (activePersonaId === targetPersonaId) {
       showTypingIndicator();
-      currentStatusEl.textContent = 'typing...';
-      currentStatusEl.className = 'status-subtitle typing';
+      updateHeaderStatus(targetPersonaId);
       scrollToBottom();
     }
 
@@ -1785,11 +1833,18 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
       generatingPersonas[targetPersonaId] = false;
       if (activePersonaId === targetPersonaId) {
         removeTypingIndicator();
-        currentStatusEl.textContent = 'online';
-        currentStatusEl.className = 'status-subtitle';
+        updateHeaderStatus(targetPersonaId);
       }
     }
   }
+
+  // Periodic Status Refresh (Updates online/offline indicator dynamically every 30s)
+  setInterval(() => {
+    renderContactList(LocalDB.getPersonas());
+    if (activePersonaId) {
+      updateHeaderStatus(activePersonaId);
+    }
+  }, 30000);
 
   // -------------------------------------------------------------
   // Input Auto-Resizing & Event Listeners

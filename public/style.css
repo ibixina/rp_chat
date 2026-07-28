@@ -787,6 +787,7 @@ body, html {
 .avatar-wrapper.offline img,
 .avatar-wrapper:has(.online-badge.offline) img {
   border-color: #3b4a54;
+  opacity: 0.85;
 }
 
 .avatar-wrapper .online-badge {
