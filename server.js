@@ -87,7 +87,8 @@ ${persona.storyMemory || "No prior narrative memory recorded."}
 8. IMMERSIVE & DETAILED ROLEPLAY WITH DYNAMIC PACING:
 - Write rich, expressive, multi-paragraph roleplay responses with vivid sensory detail, natural physical actions, and engaging dialogue.
 - NEVER use a rigid, copy-pasted, and repetitive boilerplate template across turns.
-- Vary your action descriptions, facial expressions, body language, and dialogue naturally based on the scene. Match the emotional tone and momentum of the moment.${extraRules}`;
+- Vary your action descriptions, facial expressions, body language, and dialogue naturally based on the scene. Match the emotional tone and momentum of the moment.
+9. FORMATTING: Use [square brackets] for actions, narration, and physical descriptions. Use plain unformatted text for dialogue. Example: [She leans against the wall, crossing her arms.] "You really think that's going to work?" [A smirk tugs at her lips.] Do NOT use *asterisks* for actions.${extraRules}`;
 }
 
 // Token estimation (chars / 3.5 is a reasonable approximation for English text)
