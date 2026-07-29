@@ -1223,13 +1223,28 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
   const btnCancelRetryModal = document.getElementById('btn-cancel-retry-modal');
   const btnConfirmRetry = document.getElementById('btn-confirm-retry');
 
-  function openRetryModal(msgId, isErrorRetry = false) {
+  function openRetryModal(msgId, isErrorRetry = false, existingInstruction = '') {
     pendingRetryMsgId = msgId;
     isPendingErrorRetry = isErrorRetry;
-    if (retryInputEl) retryInputEl.value = '';
+
+    let instructionToUse = existingInstruction || '';
+    if (!instructionToUse && msgId && !isErrorRetry && activePersonaId) {
+      const msgs = LocalDB.getMessages(activePersonaId);
+      const targetMsg = msgs.find(m => m.id === msgId);
+      if (targetMsg && targetMsg.retryInstruction) {
+        instructionToUse = targetMsg.retryInstruction;
+      }
+    }
+
+    if (retryInputEl) retryInputEl.value = instructionToUse;
     if (retryModalEl) {
       showModal(retryModalEl);
-      setTimeout(() => { if (retryInputEl) retryInputEl.focus(); }, 100);
+      setTimeout(() => {
+        if (retryInputEl) {
+          retryInputEl.focus();
+          if (instructionToUse) retryInputEl.select();
+        }
+      }, 100);
     }
   }
 
@@ -1607,10 +1622,11 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
       errorRetryBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         bubble.remove();
+        const existingInstruction = msg.retryInstruction || '';
         if (e.shiftKey || e.ctrlKey) {
-          generatePersonaResponse(activePersonaId, null, '');
+          generatePersonaResponse(activePersonaId, null, existingInstruction);
         } else {
-          openRetryModal(activePersonaId, true);
+          openRetryModal(activePersonaId, true, existingInstruction);
         }
       });
     }
@@ -1638,10 +1654,11 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
     if (retryBtn) {
       retryBtn.addEventListener('click', (e) => {
         e.stopPropagation();
+        const existingInstruction = msg.retryInstruction || '';
         if (e.shiftKey || e.ctrlKey) {
-          retryMessage(msg.id, '');
+          retryMessage(msg.id, existingInstruction);
         } else {
-          openRetryModal(msg.id);
+          openRetryModal(msg.id, false, existingInstruction);
         }
       });
     }
@@ -1890,7 +1907,8 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
         id: assistantMsgId,
         sender: 'persona',
         text: assistantText,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        ...(customInstruction && customInstruction.trim() ? { retryInstruction: customInstruction.trim() } : {})
       };
       LocalDB.addMessage(personaId, finalAssistantMsg);
 
@@ -1914,7 +1932,8 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
           id: `err-${Date.now()}`,
           sender: 'persona',
           text: `⚠️ Error generating response: ${err.message}`,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
+          ...(customInstruction && customInstruction.trim() ? { retryInstruction: customInstruction.trim() } : {})
         };
         appendMessageBubble(errorMsgObj);
         scrollToBottom();
