@@ -521,7 +521,7 @@ function buildRecentMessages(allMessages, tokenBudget) {
 // Retry / Regenerate stream response
 app.post("/api/chats/:personaId/retry", async (req, res) => {
   const { personaId } = req.params;
-  const { messageId } = req.body;
+  const { messageId, customInstruction } = req.body;
 
   const persona = db.getPersona(personaId);
   if (!persona) {
@@ -532,9 +532,13 @@ app.post("/api/chats/:personaId/retry", async (req, res) => {
     db.prepareRetry(personaId, messageId);
   }
 
+  const extraRules = customInstruction && customInstruction.trim()
+    ? `\n\n[STEERING INSTRUCTION FOR THIS TURN]: You MUST specifically follow this custom direction from the user for this response turn: "${customInstruction.trim()}".`
+    : '';
+
   const allMessages = db.getMessages(personaId);
   const promptMessages = [
-    { role: "system", content: buildSystemPrompt(persona) },
+    { role: "system", content: buildSystemPrompt(persona, extraRules) },
     ...buildRecentMessages(allMessages),
   ];
 

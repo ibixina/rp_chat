@@ -432,6 +432,44 @@
     </div>
   </div>
 
+  <!-- MODAL: RETRY / REGENERATE WITH INSTRUCTION -->
+  <div class="modal-overlay hidden" id="retry-instruction-modal" style="z-index: 1150;">
+    <div class="modal-card" style="max-width: 500px;">
+      <div class="modal-header">
+        <h3><i class="fa-solid fa-rotate-right" style="color: var(--accent-green);"></i> Regenerate Response</h3>
+        <button id="btn-close-retry-modal" class="close-btn">&times;</button>
+      </div>
+      <div class="modal-body" style="padding: 20px;">
+        <div style="margin-bottom: 14px;">
+          <label style="display: block; font-size: 13px; font-weight: 600; color: var(--text-main); margin-bottom: 6px;">
+            Steering Instruction (Optional)
+          </label>
+          <textarea id="retry-instruction-input" rows="3" placeholder="e.g. Be more sarcastic, focus on physical reactions, or respond in short sentences..." style="width: 100%; border: 1px solid var(--border-color); border-radius: 8px; padding: 10px; background: var(--bg-primary); color: var(--text-main); font-family: inherit; font-size: 13px; resize: vertical; outline: none;"></textarea>
+        </div>
+        <div style="margin-bottom: 14px;">
+          <div style="font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 8px;">Quick Presets</div>
+          <div class="preset-chips-container" style="display: flex; flex-wrap: wrap; gap: 6px;">
+            <button type="button" class="preset-chip" data-preset="Write a longer, more detailed roleplay response.">⚡ Detailed</button>
+            <button type="button" class="preset-chip" data-preset="Keep the response short, concise, and direct.">🎯 Shorter</button>
+            <button type="button" class="preset-chip" data-preset="Express stronger emotion and physical reaction.">🔥 Emotional</button>
+            <button type="button" class="preset-chip" data-preset="Include rich inner thoughts in square brackets [like this].">🤫 Inner Thoughts</button>
+            <button type="button" class="preset-chip" data-preset="Maintain a defiant, playful tone.">⚔️ Defiant</button>
+          </div>
+        </div>
+        <div style="font-size: 11px; color: var(--text-muted); display: flex; align-items: center; gap: 6px;">
+          <i class="fa-solid fa-keyboard"></i> Tip: Hold <kbd style="background: var(--bg-header); padding: 2px 5px; border-radius: 4px; border: 1px solid var(--border-color);">Shift</kbd> when clicking 🔄 for instant retry.
+        </div>
+      </div>
+      <div class="modal-footer" style="padding: 14px 20px; background-color: var(--bg-header); border-top: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center;">
+        <button type="button" class="btn btn-secondary" id="btn-quick-retry">Instant Retry</button>
+        <div style="display: flex; gap: 8px;">
+          <button type="button" class="btn btn-secondary" id="btn-cancel-retry-modal">Cancel</button>
+          <button type="button" class="btn btn-primary" id="btn-confirm-retry"><i class="fa-solid fa-play"></i> Regenerate</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- MODAL: CUSTOM IN-APP CONFIRMATION DIALOG -->
   <div class="modal-overlay hidden" id="confirm-modal" style="z-index: 1200;">
     <div class="modal-card" style="max-width: 440px;">

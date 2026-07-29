@@ -1120,3 +1120,30 @@ body, html {
   text-align: center;
 }
 
+/* Preset Chips in Retry Modal */
+.preset-chip {
+  background-color: var(--bg-header, #202c33);
+  color: var(--text-main, #e9edef);
+  border: 1px solid var(--border-color, #222d34);
+  border-radius: 16px;
+  padding: 5px 11px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  user-select: none;
+}
+
+.preset-chip:hover {
+  background-color: rgba(0, 168, 132, 0.15);
+  border-color: var(--accent-green, #00a884);
+  color: var(--accent-green, #00a884);
+}
+
+.preset-chip.active {
+  background-color: var(--accent-green, #00a884);
+  border-color: var(--accent-green, #00a884);
+  color: #111b21;
+  font-weight: 600;
+}
+

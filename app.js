@@ -1134,6 +1134,98 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
   if (btnCancelSettings) btnCancelSettings.addEventListener('click', () => hideModal(settingsModal));
 
   // -------------------------------------------------------------
+  // Guided Retry Modal Handlers
+  // -------------------------------------------------------------
+  let pendingRetryMsgId = null;
+  let isPendingErrorRetry = false;
+
+  const retryModalEl = document.getElementById('retry-instruction-modal');
+  const retryInputEl = document.getElementById('retry-instruction-input');
+  const btnCloseRetryModal = document.getElementById('btn-close-retry-modal');
+  const btnCancelRetryModal = document.getElementById('btn-cancel-retry-modal');
+  const btnConfirmRetry = document.getElementById('btn-confirm-retry');
+  const btnQuickRetry = document.getElementById('btn-quick-retry');
+
+  function openRetryModal(msgId, isErrorRetry = false) {
+    pendingRetryMsgId = msgId;
+    isPendingErrorRetry = isErrorRetry;
+    if (retryInputEl) retryInputEl.value = '';
+    if (retryModalEl) {
+      const chips = retryModalEl.querySelectorAll('.preset-chip');
+      chips.forEach(chip => chip.classList.remove('active'));
+      showModal(retryModalEl);
+      setTimeout(() => { if (retryInputEl) retryInputEl.focus(); }, 100);
+    }
+  }
+
+  function closeRetryModal() {
+    pendingRetryMsgId = null;
+    isPendingErrorRetry = false;
+    if (retryInputEl) retryInputEl.value = '';
+    if (retryModalEl) hideModal(retryModalEl);
+  }
+
+  if (btnCloseRetryModal) btnCloseRetryModal.addEventListener('click', closeRetryModal);
+  if (btnCancelRetryModal) btnCancelRetryModal.addEventListener('click', closeRetryModal);
+
+  if (retryModalEl) {
+    const chips = retryModalEl.querySelectorAll('.preset-chip');
+    chips.forEach(chip => {
+      chip.addEventListener('click', () => {
+        const text = chip.dataset.preset;
+        if (retryInputEl) {
+          if (retryInputEl.value.trim() === '') {
+            retryInputEl.value = text;
+            chip.classList.add('active');
+          } else if (retryInputEl.value.includes(text)) {
+            retryInputEl.value = retryInputEl.value.replace(text, '').replace(/\s+/g, ' ').trim();
+            chip.classList.remove('active');
+          } else {
+            retryInputEl.value = (retryInputEl.value.trim() + ' ' + text).trim();
+            chip.classList.add('active');
+          }
+        }
+      });
+    });
+  }
+
+  if (btnConfirmRetry) {
+    btnConfirmRetry.addEventListener('click', () => {
+      const msgId = pendingRetryMsgId;
+      const isErr = isPendingErrorRetry;
+      const instruction = retryInputEl ? retryInputEl.value.trim() : '';
+      closeRetryModal();
+      if (isErr) {
+        generatePersonaResponse(activePersonaId, null, instruction);
+      } else if (msgId) {
+        retryMessage(msgId, instruction);
+      }
+    });
+  }
+
+  if (btnQuickRetry) {
+    btnQuickRetry.addEventListener('click', () => {
+      const msgId = pendingRetryMsgId;
+      const isErr = isPendingErrorRetry;
+      closeRetryModal();
+      if (isErr) {
+        generatePersonaResponse(activePersonaId, null, '');
+      } else if (msgId) {
+        retryMessage(msgId, '');
+      }
+    });
+  }
+
+  if (retryInputEl) {
+    retryInputEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        if (btnConfirmRetry) btnConfirmRetry.click();
+      }
+    });
+  }
+
+  // -------------------------------------------------------------
   // UI Rendering: Contact List & Status
   // -------------------------------------------------------------
   const OFFLINE_THRESHOLD_MS = 60 * 60 * 1000; // 1 hour
@@ -1435,7 +1527,7 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
           <button class="action-btn continue-btn" title="Continue persona generation">
             <i class="fa-solid fa-play"></i>
           </button>
-          <button class="action-btn retry-btn" title="Regenerate this turn">
+          <button class="action-btn retry-btn" title="Regenerate this turn (Hold Shift for instant retry)">
             <i class="fa-solid fa-rotate"></i>
           </button>
         ` : ''}
@@ -1450,7 +1542,11 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
       errorRetryBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         bubble.remove();
-        generatePersonaResponse(activePersonaId);
+        if (e.shiftKey || e.ctrlKey) {
+          generatePersonaResponse(activePersonaId, null, '');
+        } else {
+          openRetryModal(activePersonaId, true);
+        }
       });
     }
 
@@ -1477,7 +1573,11 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
     if (retryBtn) {
       retryBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        retryMessage(msg.id);
+        if (e.shiftKey || e.ctrlKey) {
+          retryMessage(msg.id, '');
+        } else {
+          openRetryModal(msg.id);
+        }
       });
     }
 
@@ -1644,7 +1744,7 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
     await generatePersonaResponse(targetPersonaId);
   }
 
-  async function generatePersonaResponse(personaId, overridePromptMessages = null) {
+  async function generatePersonaResponse(personaId, overridePromptMessages = null, customInstruction = '') {
     if (generatingPersonas[personaId]) return;
     generatingPersonas[personaId] = true;
 
@@ -1688,7 +1788,10 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
     try {
       const settings = LocalDB.getSettings();
       const messages = LocalDB.getMessages(personaId);
-      const promptMessages = overridePromptMessages || preparePromptMessages(persona, messages, settings);
+      const extraSteering = customInstruction && customInstruction.trim()
+        ? `\n\n[STEERING INSTRUCTION FOR THIS TURN]: You MUST specifically follow this custom direction from the user for this response turn: "${customInstruction.trim()}".`
+        : '';
+      const promptMessages = overridePromptMessages || preparePromptMessages(persona, messages, settings, extraSteering);
 
       assistantText = await streamAiCompletion(promptMessages, settings, (chunkText) => {
         if (activePersonaId === personaId) {
@@ -1765,7 +1868,7 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
     }
   }
 
-  async function retryMessage(msgId) {
+  async function retryMessage(msgId, customInstruction = '') {
     const targetPersonaId = activePersonaId;
     if (!targetPersonaId || generatingPersonas[targetPersonaId]) return;
 
@@ -1777,7 +1880,7 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
     }
 
     renderChatFeed(targetPersonaId);
-    await generatePersonaResponse(targetPersonaId);
+    await generatePersonaResponse(targetPersonaId, null, customInstruction);
   }
 
   async function continuePersonaMessage(msg, bubble) {
