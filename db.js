@@ -200,10 +200,25 @@ module.exports = {
     return db.messages[personaId] || [];
   },
 
+  cleanBracketSpam(text) {
+    if (!text) return text;
+    let clean = text;
+    clean = clean.replace(/\[{2,}/g, '[').replace(/\]{2,}/g, ']');
+    clean = clean.replace(/\[\s*\]/g, '');
+    clean = clean.replace(/"\]/g, '"').replace(/\["/g, '"');
+    clean = clean.replace(/\]\s*"/g, '"').replace(/"\s*\[/g, '"');
+    clean = clean.replace(/\]\s*\[/g, ' ');
+    clean = clean.replace(/\[\s+/g, '[').replace(/\s+\]/g, ']');
+    clean = clean.replace(/\s+([.,!?:;])/g, '$1');
+    clean = clean.replace(/\s{2,}/g, ' ');
+    return clean.trim();
+  },
+
   sanitizeText(text) {
     if (!text) return text;
     let clean = text.replace(/\*([^*]+)\*/g, '[$1]');
     clean = clean.replace(/\*\*/g, '').replace(/\*/g, '').replace(/__/g, '').replace(/_/g, '');
+    clean = this.cleanBracketSpam(clean);
     return clean;
   },
 

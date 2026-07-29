@@ -88,7 +88,7 @@ ${persona.storyMemory || "No prior narrative memory recorded."}
 - Write rich, expressive, multi-paragraph roleplay responses with vivid sensory detail, natural physical actions, and engaging dialogue.
 - NEVER use a rigid, copy-pasted, and repetitive boilerplate template across turns.
 - Vary your action descriptions, facial expressions, body language, and dialogue naturally based on the scene. Match the emotional tone and momentum of the moment.
-9. FORMATTING: Use [square brackets] for actions, narration, and physical descriptions. Use plain unformatted text for dialogue. Example: [She leans against the wall, crossing her arms.] "You really think that's going to work?" [A smirk tugs at her lips.] Do NOT use *asterisks* for actions, and NEVER place **bold** asterisks around dialogue or individual words.${extraRules}`;
+9. FORMATTING: Write actions and physical descriptions inside [square brackets] (e.g. [She leans back and laughs.]). Write dialogue inside quotation marks. Do NOT put brackets around individual words or tokens, and do NOT use *asterisks* or **bold**.${extraRules}`;
 }
 
 // Token estimation (chars / 3.5 is a reasonable approximation for English text)

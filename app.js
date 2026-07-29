@@ -235,12 +235,25 @@ document.addEventListener('DOMContentLoaded', () => {
       this.saveRaw(raw);
     },
 
+    cleanBracketSpam(text) {
+      if (!text) return text;
+      let clean = text;
+      clean = clean.replace(/\[{2,}/g, '[').replace(/\]{2,}/g, ']');
+      clean = clean.replace(/\[\s*\]/g, '');
+      clean = clean.replace(/"\]/g, '"').replace(/\["/g, '"');
+      clean = clean.replace(/\]\s*"/g, '"').replace(/"\s*\[/g, '"');
+      clean = clean.replace(/\]\s*\[/g, ' ');
+      clean = clean.replace(/\[\s+/g, '[').replace(/\s+\]/g, ']');
+      clean = clean.replace(/\s+([.,!?:;])/g, '$1');
+      clean = clean.replace(/\s{2,}/g, ' ');
+      return clean.trim();
+    },
+
     sanitizeText(text) {
       if (!text) return text;
-      // Convert *...* to [...]
       let clean = text.replace(/\*([^*]+)\*/g, '[$1]');
-      // Strip remaining markdown
       clean = clean.replace(/\*\*/g, '').replace(/\*/g, '').replace(/__/g, '').replace(/_/g, '');
+      clean = this.cleanBracketSpam(clean);
       return clean;
     },
 
@@ -346,7 +359,7 @@ ${persona.storyMemory || "No prior narrative memory recorded."}
 - Write rich, expressive, multi-paragraph roleplay responses with vivid sensory detail, natural physical actions, and engaging dialogue.
 - NEVER use a rigid, copy-pasted, and repetitive boilerplate template across turns.
 - Vary your action descriptions, facial expressions, body language, and dialogue naturally based on the scene. Match the emotional tone and momentum of the moment.
-9. FORMATTING: Use [square brackets] for actions, narration, and physical descriptions. Use plain unformatted text for dialogue. Example: [She leans against the wall, crossing her arms.] "You really think that's going to work?" [A smirk tugs at her lips.] Do NOT use *asterisks* or _underscores_ for actions or emphasis, and NEVER place **bold** around dialogue or individual words.${extraRules}`;
+9. FORMATTING: Write actions and physical descriptions inside [square brackets] (e.g. [She leans back and laughs.]). Write dialogue inside quotation marks. Do NOT put brackets around individual words or tokens, and do NOT use *asterisks* or **bold**.${extraRules}`;
   }
 
   function estimateTokens(text) {
@@ -1449,6 +1462,11 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
     if (!str) return '';
     let text = str.trim();
     text = text.replace(/^""\s*/, '').replace(/^"\s*(?=[a-z\[])/i, '');
+    
+    if (typeof LocalDB !== 'undefined' && LocalDB.cleanBracketSpam) {
+      text = LocalDB.cleanBracketSpam(text);
+    }
+    
     let escaped = escapeHtml(text);
 
     // Strip bold and italics completely
