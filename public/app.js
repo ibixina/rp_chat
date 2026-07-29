@@ -323,10 +323,11 @@ ${persona.storyMemory || "No prior narrative memory recorded."}
   }
 
   function preparePromptMessages(persona, messages, settings, extraRules = '') {
-    const sysPrompt = buildSystemPrompt(persona, extraRules);
+    const sysPrompt = buildSystemPrompt(persona, '');
     const sysTokens = estimateTokens(sysPrompt);
+    const extraTokens = extraRules ? estimateTokens(extraRules) : 0;
     const budget = settings.contextBudget || 6000;
-    let availableBudget = Math.max(budget - sysTokens - 500, 1000);
+    let availableBudget = Math.max(budget - sysTokens - extraTokens - 500, 1000);
 
     const formattedMessages = [];
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -340,7 +341,11 @@ ${persona.storyMemory || "No prior narrative memory recorded."}
       formattedMessages.unshift({ role, content: msg.text });
     }
 
-    return [{ role: 'system', content: sysPrompt }, ...formattedMessages];
+    const finalMessages = [{ role: 'system', content: sysPrompt }, ...formattedMessages];
+    if (extraRules) {
+      finalMessages.push({ role: 'system', content: extraRules.trim() });
+    }
+    return finalMessages;
   }
 
   async function streamAiCompletion(promptMessages, settings, onChunk, isRetry = false) {

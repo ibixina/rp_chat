@@ -538,9 +538,12 @@ app.post("/api/chats/:personaId/retry", async (req, res) => {
 
   const allMessages = db.getMessages(personaId);
   const promptMessages = [
-    { role: "system", content: buildSystemPrompt(persona, extraRules) },
+    { role: "system", content: buildSystemPrompt(persona, "") },
     ...buildRecentMessages(allMessages),
   ];
+  if (extraRules) {
+    promptMessages.push({ role: "system", content: extraRules.trim() });
+  }
 
   const { assistantText, assistantMsgId, error } = await handleAiStream(
     res,
@@ -644,8 +647,9 @@ app.post(
       "\n7. CONTINUATION DIRECTIVE: Seamlessly continue the narrative of your last message. Pick up exactly where your previous sentence ended without repeating text.";
 
     const promptMessages = [
-      { role: "system", content: buildSystemPrompt(persona, extraRules) },
+      { role: "system", content: buildSystemPrompt(persona, "") },
       ...recentMessages,
+      { role: "system", content: extraRules.trim() },
       {
         role: "user",
         content:
