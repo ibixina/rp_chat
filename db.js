@@ -147,10 +147,35 @@ process.on('exit', flushSync);
 process.on('SIGINT', () => { flushSync(); process.exit(); });
 process.on('SIGTERM', () => { flushSync(); process.exit(); });
 
-// Initialize cache & indexes at module load
-readDB();
+function cleanBracketSpam(str) {
+  if (!str) return str;
+  return str.split('\n').map(line => {
+    let clean = line;
+    clean = clean.replace(/\[{2,}/g, '[').replace(/\]{2,}/g, ']');
+    clean = clean.replace(/\[\s*\]/g, '');
+    clean = clean.replace(/"\]/g, '"').replace(/\["/g, '"');
+    clean = clean.replace(/\]\s*"/g, '"').replace(/"\s*\[/g, '"');
+    clean = clean.replace(/\]\s*\[/g, ' ');
+    clean = clean.replace(/\[\s+/g, '[').replace(/\s+\]/g, ']');
+    clean = clean.replace(/\s+([.,!?:;])/g, '$1');
+    clean = clean.replace(/\s{2,}/g, ' ');
+    clean = clean.trim();
+    clean = clean.replace(/(\])\s*(")/g, '$1 $2').replace(/(")\s*(\[)/g, '$1 $2');
+    return clean;
+  }).join('\n');
+}
+
+function sanitizeText(text) {
+  if (!text) return text;
+  let clean = text.replace(/\*([^*]+)\*/g, '[$1]');
+  clean = clean.replace(/\*\*/g, '').replace(/\*/g, '').replace(/__/g, '').replace(/_/g, '');
+  clean = cleanBracketSpam(clean);
+  return clean;
+}
 
 module.exports = {
+  cleanBracketSpam,
+  sanitizeText,
   getPersonas() {
     readDB();
     if (!cachedPersonaSummaries) rebuildPersonaSummaries();
@@ -198,28 +223,6 @@ module.exports = {
   getMessages(personaId) {
     const db = readDB();
     return db.messages[personaId] || [];
-  },
-
-  cleanBracketSpam(text) {
-    if (!text) return text;
-    let clean = text;
-    clean = clean.replace(/\[{2,}/g, '[').replace(/\]{2,}/g, ']');
-    clean = clean.replace(/\[\s*\]/g, '');
-    clean = clean.replace(/"\]/g, '"').replace(/\["/g, '"');
-    clean = clean.replace(/\]\s*"/g, '"').replace(/"\s*\[/g, '"');
-    clean = clean.replace(/\]\s*\[/g, ' ');
-    clean = clean.replace(/\[\s+/g, '[').replace(/\s+\]/g, ']');
-    clean = clean.replace(/\s+([.,!?:;])/g, '$1');
-    clean = clean.replace(/\s{2,}/g, ' ');
-    return clean.trim();
-  },
-
-  sanitizeText(text) {
-    if (!text) return text;
-    let clean = text.replace(/\*([^*]+)\*/g, '[$1]');
-    clean = clean.replace(/\*\*/g, '').replace(/\*/g, '').replace(/__/g, '').replace(/_/g, '');
-    clean = this.cleanBracketSpam(clean);
-    return clean;
   },
 
   addMessage(personaId, message) {
