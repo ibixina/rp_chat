@@ -53,7 +53,7 @@ document.addEventListener('DOMContentLoaded', () => {
     getRaw() {
       try {
         const data = JSON.parse(localStorage.getItem(this.KEY)) || { personas: [], messages: {}, settings: {} };
-        if (!data.migratedMarkdownV2) {
+        if (!data.migratedMarkdownV3) {
           if (data.messages) {
             for (const personaId in data.messages) {
               data.messages[personaId].forEach(msg => {
@@ -63,7 +63,7 @@ document.addEventListener('DOMContentLoaded', () => {
               });
             }
           }
-          data.migratedMarkdownV2 = true;
+          data.migratedMarkdownV3 = true;
           localStorage.setItem(this.KEY, JSON.stringify(data));
         }
         return data;
@@ -244,6 +244,14 @@ document.addEventListener('DOMContentLoaded', () => {
       return lines.map(line => {
         let clean = line.trim();
         if (!clean) return '';
+
+        // If line is a single action block wrapped in outer brackets with nested inner brackets:
+        if (clean.startsWith('[') && clean.endsWith(']') && !clean.includes('"')) {
+          let inner = clean.slice(1, -1);
+          inner = inner.replace(/[\[\]]/g, '');
+          inner = inner.replace(/[ \t]+([.,!?:;])/g, '$1').replace(/[ \t]{2,}/g, ' ').trim();
+          return '[' + inner + ']';
+        }
 
         clean = clean.replace(/\[{2,}/g, '[').replace(/\]{2,}/g, ']');
         clean = clean.replace(/\[[ \t]*\]/g, '');

@@ -149,20 +149,34 @@ process.on('SIGTERM', () => { flushSync(); process.exit(); });
 
 function cleanBracketSpam(str) {
   if (!str) return str;
-  return str.split('\n').map(line => {
-    let clean = line;
+
+  let text = str;
+  text = text.replace(/([.!?\]])\s*("[^"\n]+")/g, '$1\n\n$2');
+  text = text.replace(/("[^"\n]+")\s*([A-Z\[])/g, '$1\n\n$2');
+
+  const lines = text.split(/\r?\n/);
+  return lines.map(line => {
+    let clean = line.trim();
+    if (!clean) return '';
+
+    // If line is a single action block wrapped in outer brackets with nested inner brackets:
+    if (clean.startsWith('[') && clean.endsWith(']') && !clean.includes('"')) {
+      let inner = clean.slice(1, -1);
+      inner = inner.replace(/[\[\]]/g, '');
+      inner = inner.replace(/[ \t]+([.,!?:;])/g, '$1').replace(/[ \t]{2,}/g, ' ').trim();
+      return '[' + inner + ']';
+    }
+
     clean = clean.replace(/\[{2,}/g, '[').replace(/\]{2,}/g, ']');
-    clean = clean.replace(/\[\s*\]/g, '');
+    clean = clean.replace(/\[[ \t]*\]/g, '');
     clean = clean.replace(/"\]/g, '"').replace(/\["/g, '"');
-    clean = clean.replace(/\]\s*"/g, '"').replace(/"\s*\[/g, '"');
-    clean = clean.replace(/\]\s*\[/g, ' ');
-    clean = clean.replace(/\[\s+/g, '[').replace(/\s+\]/g, ']');
-    clean = clean.replace(/\s+([.,!?:;])/g, '$1');
-    clean = clean.replace(/\s{2,}/g, ' ');
-    clean = clean.trim();
-    clean = clean.replace(/(\])\s*(")/g, '$1 $2').replace(/(")\s*(\[)/g, '$1 $2');
-    return clean;
-  }).join('\n');
+    clean = clean.replace(/\][ \t]*"/g, '"').replace(/"\s*\[/g, '"');
+    clean = clean.replace(/\][ \t]*\[/g, ' ');
+    clean = clean.replace(/\[[ \t]+/g, '[').replace(/[ \t]+\]/g, ']');
+    clean = clean.replace(/[ \t]+([.,!?:;])/g, '$1');
+    clean = clean.replace(/[ \t]{2,}/g, ' ');
+    return clean.trim();
+  }).filter((line, i, arr) => line !== '' || (i > 0 && arr[i-1] !== '')).join('\n');
 }
 
 function sanitizeText(text) {

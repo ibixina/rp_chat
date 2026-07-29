@@ -12,6 +12,8 @@ uploads/*
 public/uploads/*
 !public/uploads/default-avatar.svg
 
-# Perchance Data Exports
+# Exports & Sensitive Chat Data
+*_export_*.json
+*_chat_*.json
 perchance-characters-export-*.json
 perchance-*.json
