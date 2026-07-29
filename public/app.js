@@ -1134,7 +1134,7 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
   if (btnCancelSettings) btnCancelSettings.addEventListener('click', () => hideModal(settingsModal));
 
   // -------------------------------------------------------------
-  // Guided Retry Modal Handlers
+  // Retry Modal Handlers
   // -------------------------------------------------------------
   let pendingRetryMsgId = null;
   let isPendingErrorRetry = false;
@@ -1144,15 +1144,12 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
   const btnCloseRetryModal = document.getElementById('btn-close-retry-modal');
   const btnCancelRetryModal = document.getElementById('btn-cancel-retry-modal');
   const btnConfirmRetry = document.getElementById('btn-confirm-retry');
-  const btnQuickRetry = document.getElementById('btn-quick-retry');
 
   function openRetryModal(msgId, isErrorRetry = false) {
     pendingRetryMsgId = msgId;
     isPendingErrorRetry = isErrorRetry;
     if (retryInputEl) retryInputEl.value = '';
     if (retryModalEl) {
-      const chips = retryModalEl.querySelectorAll('.preset-chip');
-      chips.forEach(chip => chip.classList.remove('active'));
       showModal(retryModalEl);
       setTimeout(() => { if (retryInputEl) retryInputEl.focus(); }, 100);
     }
@@ -1168,27 +1165,6 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
   if (btnCloseRetryModal) btnCloseRetryModal.addEventListener('click', closeRetryModal);
   if (btnCancelRetryModal) btnCancelRetryModal.addEventListener('click', closeRetryModal);
 
-  if (retryModalEl) {
-    const chips = retryModalEl.querySelectorAll('.preset-chip');
-    chips.forEach(chip => {
-      chip.addEventListener('click', () => {
-        const text = chip.dataset.preset;
-        if (retryInputEl) {
-          if (retryInputEl.value.trim() === '') {
-            retryInputEl.value = text;
-            chip.classList.add('active');
-          } else if (retryInputEl.value.includes(text)) {
-            retryInputEl.value = retryInputEl.value.replace(text, '').replace(/\s+/g, ' ').trim();
-            chip.classList.remove('active');
-          } else {
-            retryInputEl.value = (retryInputEl.value.trim() + ' ' + text).trim();
-            chip.classList.add('active');
-          }
-        }
-      });
-    });
-  }
-
   if (btnConfirmRetry) {
     btnConfirmRetry.addEventListener('click', () => {
       const msgId = pendingRetryMsgId;
@@ -1199,19 +1175,6 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
         generatePersonaResponse(activePersonaId, null, instruction);
       } else if (msgId) {
         retryMessage(msgId, instruction);
-      }
-    });
-  }
-
-  if (btnQuickRetry) {
-    btnQuickRetry.addEventListener('click', () => {
-      const msgId = pendingRetryMsgId;
-      const isErr = isPendingErrorRetry;
-      closeRetryModal();
-      if (isErr) {
-        generatePersonaResponse(activePersonaId, null, '');
-      } else if (msgId) {
-        retryMessage(msgId, '');
       }
     });
   }
