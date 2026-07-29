@@ -53,19 +53,17 @@ document.addEventListener('DOMContentLoaded', () => {
     getRaw() {
       try {
         const data = JSON.parse(localStorage.getItem(this.KEY)) || { personas: [], messages: {}, settings: {} };
-        if (!data.migratedMarkdown) {
+        if (!data.migratedMarkdownV2) {
           if (data.messages) {
             for (const personaId in data.messages) {
               data.messages[personaId].forEach(msg => {
                 if (msg.text) {
-                  let clean = msg.text.replace(/\*([^*]+)\*/g, '[$1]');
-                  clean = clean.replace(/\*\*/g, '').replace(/\*/g, '').replace(/__/g, '').replace(/_/g, '');
-                  msg.text = clean;
+                  msg.text = this.sanitizeText(msg.text);
                 }
               });
             }
           }
-          data.migratedMarkdown = true;
+          data.migratedMarkdownV2 = true;
           localStorage.setItem(this.KEY, JSON.stringify(data));
         }
         return data;
@@ -235,18 +233,28 @@ document.addEventListener('DOMContentLoaded', () => {
       this.saveRaw(raw);
     },
 
-    cleanBracketSpam(text) {
-      if (!text) return text;
-      let clean = text;
-      clean = clean.replace(/\[{2,}/g, '[').replace(/\]{2,}/g, ']');
-      clean = clean.replace(/\[\s*\]/g, '');
-      clean = clean.replace(/"\]/g, '"').replace(/\["/g, '"');
-      clean = clean.replace(/\]\s*"/g, '"').replace(/"\s*\[/g, '"');
-      clean = clean.replace(/\]\s*\[/g, ' ');
-      clean = clean.replace(/\[\s+/g, '[').replace(/\s+\]/g, ']');
-      clean = clean.replace(/\s+([.,!?:;])/g, '$1');
-      clean = clean.replace(/\s{2,}/g, ' ');
-      return clean.trim();
+    cleanBracketSpam(str) {
+      if (!str) return str;
+
+      let text = str;
+      text = text.replace(/([.!?\]])\s*("[^"\n]+")/g, '$1\n\n$2');
+      text = text.replace(/("[^"\n]+")\s*([A-Z\[])/g, '$1\n\n$2');
+
+      const lines = text.split(/\r?\n/);
+      return lines.map(line => {
+        let clean = line.trim();
+        if (!clean) return '';
+
+        clean = clean.replace(/\[{2,}/g, '[').replace(/\]{2,}/g, ']');
+        clean = clean.replace(/\[[ \t]*\]/g, '');
+        clean = clean.replace(/"\]/g, '"').replace(/\["/g, '"');
+        clean = clean.replace(/\][ \t]*"/g, '"').replace(/"[ \t]*\[/g, '"');
+        clean = clean.replace(/\][ \t]*\[/g, ' ');
+        clean = clean.replace(/\[[ \t]+/g, '[').replace(/[ \t]+\]/g, ']');
+        clean = clean.replace(/[ \t]+([.,!?:;])/g, '$1');
+        clean = clean.replace(/[ \t]{2,}/g, ' ');
+        return clean.trim();
+      }).filter((line, i, arr) => line !== '' || (i > 0 && arr[i-1] !== '')).join('\n');
     },
 
     sanitizeText(text) {
