@@ -311,6 +311,12 @@
           <span style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">How many tokens of message history to include. Lower = cheaper, higher = more context. Memory covers older events.</span>
         </div>
 
+        <div class="form-group">
+          <label for="settings-max-tokens">Max Tokens: <span id="max-tokens-display" style="color: var(--accent-green); font-weight: 600;">1200</span> tokens</label>
+          <input type="range" id="settings-max-tokens" min="100" max="8000" step="100" value="1200" style="width: 100%; cursor: pointer;">
+          <span style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">The maximum number of tokens to generate in the response.</span>
+        </div>
+
         <!-- Dedicated Memory Summarization Route -->
         <div style="border-top: 1px solid var(--border-color); margin: 18px 0 14px 0; padding-top: 14px;">
           <label style="font-weight: 600; font-size: 13px; color: var(--accent-green); display: flex; align-items: center; gap: 6px; margin-bottom: 8px;">

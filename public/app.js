@@ -973,6 +973,13 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
     document.getElementById('settings-context-budget').value = settings.contextBudget || 6000;
     document.getElementById('context-budget-display').textContent = settings.contextBudget || 6000;
 
+    const maxTokensEl = document.getElementById('settings-max-tokens');
+    if (maxTokensEl) {
+      maxTokensEl.value = settings.maxTokens || 1200;
+      document.getElementById('max-tokens-display').textContent = settings.maxTokens || 1200;
+    }
+
+
     const memBudget = settings.memoryBudget || 5000;
     const memBudgetInputEl = document.getElementById('settings-memory-budget');
     const memBudgetDisplayEl = document.getElementById('memory-budget-display');
@@ -1086,6 +1093,10 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
   const ctxInput = document.getElementById('settings-context-budget');
   if (ctxInput) ctxInput.addEventListener('input', (e) => document.getElementById('context-budget-display').textContent = e.target.value);
 
+  const maxTokensInput = document.getElementById('settings-max-tokens');
+  if (maxTokensInput) maxTokensInput.addEventListener('input', (e) => document.getElementById('max-tokens-display').textContent = e.target.value);
+
+
   const memBudgetSlider = document.getElementById('settings-memory-budget');
   if (memBudgetSlider) memBudgetSlider.addEventListener('input', (e) => document.getElementById('memory-budget-display').textContent = e.target.value);
 
@@ -1106,6 +1117,7 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
       const presencePenalty = parseFloat(presInput?.value || 0.45);
       const repetitionPenalty = parseFloat(repInput?.value || 1.18);
       const contextBudget = parseInt(ctxInput?.value || 6000, 10);
+      const maxTokens = parseInt(maxTokensInput?.value || 1200, 10);
 
       const isMemOpenRouter = document.getElementById('card-mem-openrouter')?.classList.contains('active');
       const isMemDeepInfra = document.getElementById('card-mem-deepinfra')?.classList.contains('active');
@@ -1125,6 +1137,7 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
         presencePenalty,
         repetitionPenalty,
         contextBudget,
+        maxTokens,
         memoryProvider,
         memoryModel,
         memoryBudget
