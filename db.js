@@ -182,6 +182,13 @@ module.exports = {
     return db.messages[personaId] || [];
   },
 
+  sanitizeText(text) {
+    if (!text) return text;
+    let clean = text.replace(/\*([^*]+)\*/g, '[$1]');
+    clean = clean.replace(/\*\*/g, '').replace(/\*/g, '').replace(/__/g, '').replace(/_/g, '');
+    return clean;
+  },
+
   addMessage(personaId, message) {
     const db = readDB();
     if (!db.messages[personaId]) {
@@ -190,7 +197,7 @@ module.exports = {
     const newMsg = {
       id: message.id || `msg-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
       sender: message.sender,
-      text: message.text,
+      text: this.sanitizeText(message.text),
       timestamp: message.timestamp || new Date().toISOString()
     };
     db.messages[personaId].push(newMsg);
@@ -228,7 +235,7 @@ module.exports = {
     if (db.messages[personaId]) {
       const msg = db.messages[personaId].find(m => m.id === msgId);
       if (msg) {
-        if (updates.text !== undefined) msg.text = updates.text;
+        if (updates.text !== undefined) msg.text = this.sanitizeText(updates.text);
         if (updates.reactions !== undefined) msg.reactions = updates.reactions;
         rebuildPersonaSummaries();
         scheduleDiskWrite();

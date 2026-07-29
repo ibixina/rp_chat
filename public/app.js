@@ -187,6 +187,9 @@ document.addEventListener('DOMContentLoaded', () => {
     },
 
     addMessage(personaId, msg) {
+      if (msg && msg.text) {
+        msg.text = this.sanitizeText(msg.text);
+      }
       const raw = this.getRaw();
       raw.messages = raw.messages || {};
       if (!raw.messages[personaId]) raw.messages[personaId] = [];
@@ -196,6 +199,9 @@ document.addEventListener('DOMContentLoaded', () => {
     },
 
     updateMessage(personaId, msgId, updates) {
+      if (updates && updates.text) {
+        updates.text = this.sanitizeText(updates.text);
+      }
       const raw = this.getRaw();
       const msgs = raw.messages[personaId] || [];
       const msg = msgs.find(m => m.id === msgId);
@@ -208,10 +214,18 @@ document.addEventListener('DOMContentLoaded', () => {
 
     deleteMessage(personaId, msgId) {
       const raw = this.getRaw();
-      if (raw.messages[personaId]) {
-        raw.messages[personaId] = raw.messages[personaId].filter(m => m.id !== msgId);
-        this.saveRaw(raw);
-      }
+      const msgs = raw.messages[personaId] || [];
+      raw.messages[personaId] = msgs.filter(m => m.id !== msgId);
+      this.saveRaw(raw);
+    },
+
+    sanitizeText(text) {
+      if (!text) return text;
+      // Convert *...* to [...]
+      let clean = text.replace(/\*([^*]+)\*/g, '[$1]');
+      // Strip remaining markdown
+      clean = clean.replace(/\*\*/g, '').replace(/\*/g, '').replace(/__/g, '').replace(/_/g, '');
+      return clean;
     },
 
     updateMemory(personaId, memoryText) {
@@ -315,7 +329,8 @@ ${persona.storyMemory || "No prior narrative memory recorded."}
 8. IMMERSIVE & DETAILED ROLEPLAY WITH DYNAMIC PACING:
 - Write rich, expressive, multi-paragraph roleplay responses with vivid sensory detail, natural physical actions, and engaging dialogue.
 - NEVER use a rigid, copy-pasted, and repetitive boilerplate template across turns.
-- Vary your action descriptions, facial expressions, body language, and dialogue naturally based on the scene. Match the emotional tone and momentum of the moment.${extraRules}`;
+- Vary your action descriptions, facial expressions, body language, and dialogue naturally based on the scene. Match the emotional tone and momentum of the moment.
+9. FORMATTING: Use [square brackets] for actions, narration, and physical descriptions. Use plain unformatted text for dialogue. Example: [She leans against the wall, crossing her arms.] "You really think that's going to work?" [A smirk tugs at her lips.] Do NOT use *asterisks* or _underscores_ for actions or emphasis, and NEVER place **bold** around dialogue or individual words.${extraRules}`;
   }
 
   function estimateTokens(text) {
@@ -1405,40 +1420,41 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
   function formatMessageText(str) {
     if (!str) return '';
     let text = str.trim();
-    text = text.replace(/^""\s*/, '').replace(/^"\s*(?=[a-z*])/i, '');
+    text = text.replace(/^""\s*/, '').replace(/^"\s*(?=[a-z\[])/i, '');
     let escaped = escapeHtml(text);
 
-    // 1. Clean orphan asterisks like "* " or " *"
-    escaped = escaped.replace(/(^|\s)\*{1,2}(\s|$)/g, '$1$2');
+    // Strip bold and italics completely
+    escaped = escaped.replace(/\*\*/g, '');
+    escaped = escaped.replace(/\*/g, '');
+    escaped = escaped.replace(/__/g, '');
+    escaped = escaped.replace(/_/g, '');
 
-    // 2. Format double asterisks **bold dialogue** first
-    escaped = escaped.replace(/\*\*([^*]+(?:\*[^*]+)*?)\*\*/g, (match, innerText) => {
-      return `<strong>${innerText}</strong>`;
-    });
-
-    // Helper to format single asterisk action content: preserve quoted dialogue as normal text
+    // Helper to format action content: preserve quoted dialogue as normal text
     function formatActionContent(innerText) {
       if (!innerText.includes('&quot;')) {
-        return `<span class="message-action">${innerText}</span>`;
+        return `<span class="message-action">[${innerText}]</span>`;
       }
       const parts = innerText.split(/(&quot;[^&]*?&quot;)/g);
-      return parts.map(part => {
+      const formattedParts = parts.map(part => {
         if (!part) return '';
         if (part.startsWith('&quot;') && part.endsWith('&quot;')) {
           return part;
         } else {
           return `<span class="message-action">${part}</span>`;
         }
-      }).join('');
+      });
+      return `<span class="message-action">[</span>${formattedParts.join('')}<span class="message-action">]</span>`;
     }
 
-    // 3. Format single asterisk *action* second
-    escaped = escaped.replace(/\*([^*]+)\*/g, (match, innerText) => {
+    // Format single brackets [action]
+    escaped = escaped.replace(/\[([^\]]+)\]/g, (match, innerText) => {
       return formatActionContent(innerText);
     });
 
-    // 4. Format unclosed asterisks for streaming chunks: *action until end of text/chunk
-    escaped = escaped.replace(/(^|\s)\*([^*<]+)$/g, (match, prefix, innerText) => prefix + formatActionContent(innerText));
+    // Format unclosed brackets for streaming chunks
+    escaped = escaped.replace(/(^|\s)\[([^\]<]+)$/g, (match, prefix, innerText) => {
+      return prefix + formatActionContent(innerText).replace(/\]<\/span>$/, ''); // Remove trailing bracket for unclosed
+    });
 
     escaped = escaped.replace(/\n/g, '<br>');
     return escaped;
