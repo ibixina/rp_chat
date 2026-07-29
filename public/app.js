@@ -52,7 +52,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
     getRaw() {
       try {
-        return JSON.parse(localStorage.getItem(this.KEY)) || { personas: [], messages: {}, settings: {} };
+        const data = JSON.parse(localStorage.getItem(this.KEY)) || { personas: [], messages: {}, settings: {} };
+        if (!data.migratedMarkdown) {
+          if (data.messages) {
+            for (const personaId in data.messages) {
+              data.messages[personaId].forEach(msg => {
+                if (msg.text) {
+                  let clean = msg.text.replace(/\*([^*]+)\*/g, '[$1]');
+                  clean = clean.replace(/\*\*/g, '').replace(/\*/g, '').replace(/__/g, '').replace(/_/g, '');
+                  msg.text = clean;
+                }
+              });
+            }
+          }
+          data.migratedMarkdown = true;
+          localStorage.setItem(this.KEY, JSON.stringify(data));
+        }
+        return data;
       } catch (e) {
         return { personas: [], messages: {}, settings: {} };
       }

@@ -85,6 +85,24 @@ function readDB(force = false) {
     if (!cachedDB || force || stat.mtimeMs > lastReadMtime) {
       const raw = fs.readFileSync(DB_FILE, 'utf8');
       cachedDB = JSON.parse(raw);
+      
+      // Migrate existing markdown from messages
+      if (!cachedDB.migratedMarkdown) {
+        if (cachedDB.messages) {
+          for (const personaId in cachedDB.messages) {
+            cachedDB.messages[personaId].forEach(msg => {
+              if (msg.text) {
+                let clean = msg.text.replace(/\*([^*]+)\*/g, '[$1]');
+                clean = clean.replace(/\*\*/g, '').replace(/\*/g, '').replace(/__/g, '').replace(/_/g, '');
+                msg.text = clean;
+              }
+            });
+          }
+        }
+        cachedDB.migratedMarkdown = true;
+        fs.writeFileSync(DB_FILE, JSON.stringify(cachedDB, null, 2), 'utf8');
+      }
+      
       lastReadMtime = stat.mtimeMs;
       rebuildPersonaSummaries();
     }
