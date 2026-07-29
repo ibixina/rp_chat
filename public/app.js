@@ -1466,7 +1466,7 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
     // Helper to format action content: preserve quoted dialogue as normal text
     function formatActionContent(innerText) {
       if (!innerText.includes('&quot;')) {
-        return `<span class="message-action">[${innerText}]</span>`;
+        return `<span class="message-action">${innerText}</span>`;
       }
       const parts = innerText.split(/(&quot;[^&]*?&quot;)/g);
       const formattedParts = parts.map(part => {
@@ -1477,7 +1477,7 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
           return `<span class="message-action">${part}</span>`;
         }
       });
-      return `<span class="message-action">[</span>${formattedParts.join('')}<span class="message-action">]</span>`;
+      return formattedParts.join('');
     }
 
     // Format single brackets [action]
@@ -1487,7 +1487,7 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
 
     // Format unclosed brackets for streaming chunks
     escaped = escaped.replace(/(^|\s)\[([^\]<]+)$/g, (match, prefix, innerText) => {
-      return prefix + formatActionContent(innerText).replace(/\]<\/span>$/, ''); // Remove trailing bracket for unclosed
+      return prefix + formatActionContent(innerText);
     });
 
     escaped = escaped.replace(/\n/g, '<br>');
