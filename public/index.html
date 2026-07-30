@@ -165,18 +165,22 @@
 
         <!-- Custom System Prompt -->
         <div class="form-group">
-          <label for="form-system-prompt" style="display: flex; justify-content: space-between; align-items: center;">
+          <label for="form-system-prompt" style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
             <span><i class="fa-solid fa-terminal" style="color: var(--accent-green);"></i> Custom System Prompt (Optional)</span>
-            <span style="font-size: 11px; font-weight: normal; color: var(--text-muted);">Leave empty to use default template</span>
+            <button type="button" id="btn-load-default-sysprompt" class="btn-text-link" style="background: none; border: none; color: #53bdeb; font-size: 11px; cursor: pointer; text-decoration: underline;">
+              <i class="fa-solid fa-copy"></i> Load Default Template
+            </button>
           </label>
-          <textarea id="form-system-prompt" name="systemPrompt" rows="5" placeholder="Enter custom system prompt instructions for this character (supports placeholders: ${name}, ${description}, ${storyMemory})..."></textarea>
+          <textarea id="form-system-prompt" name="systemPrompt" rows="6" placeholder="Enter custom system prompt instructions for this character (supports placeholders: ${name}, ${description}, ${storyMemory})..."></textarea>
         </div>
 
         <!-- Custom Memory Summarization Prompt -->
         <div class="form-group">
-          <label for="form-memory-prompt" style="display: flex; justify-content: space-between; align-items: center;">
+          <label for="form-memory-prompt" style="display: flex; justify-content: space-between; align-items: center; gap: 8px;">
             <span><i class="fa-solid fa-wand-magic-sparkles" style="color: #53bdeb;"></i> Custom Memory Summarization Prompt (Optional)</span>
-            <span style="font-size: 11px; font-weight: normal; color: var(--text-muted);">Leave empty to use default template</span>
+            <button type="button" id="btn-load-default-memprompt" class="btn-text-link" style="background: none; border: none; color: #53bdeb; font-size: 11px; cursor: pointer; text-decoration: underline;">
+              <i class="fa-solid fa-copy"></i> Load Default Template
+            </button>
           </label>
           <textarea id="form-memory-prompt" name="memoryPrompt" rows="4" placeholder="Enter custom instructions for auto-summarizing story memory every 12 messages..."></textarea>
         </div>
@@ -239,9 +243,11 @@
           <textarea id="memory-textarea" class="memory-edit-textarea" rows="10" placeholder="Enter story memory log..."></textarea>
         </div>
         <div class="form-group" style="margin-top: 14px;">
-          <label for="memory-prompt-textarea" style="font-size: 12.5px; font-weight: 600; color: var(--text-main); margin-bottom: 6px; display: flex; align-items: center; justify-content: space-between;">
+          <label for="memory-prompt-textarea" style="font-size: 12.5px; font-weight: 600; color: var(--text-main); margin-bottom: 6px; display: flex; align-items: center; justify-content: space-between; gap: 8px;">
             <span><i class="fa-solid fa-wand-magic-sparkles" style="color: #53bdeb;"></i> Memory Summarization Prompt (Optional)</span>
-            <span style="font-size: 11px; font-weight: normal; color: var(--text-muted);">Leave empty to use default template</span>
+            <button type="button" id="btn-load-default-memprompt-modal" class="btn-text-link" style="background: none; border: none; color: #53bdeb; font-size: 11px; cursor: pointer; text-decoration: underline;">
+              <i class="fa-solid fa-copy"></i> Load Default Template
+            </button>
           </label>
           <textarea id="memory-prompt-textarea" class="memory-edit-textarea" rows="4" placeholder="Enter custom instructions for auto-summarizing story memory for this persona..."></textarea>
         </div>
