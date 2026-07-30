@@ -86,6 +86,7 @@ document.addEventListener('DOMContentLoaded', () => {
         presencePenalty: 0.45,
         repetitionPenalty: 1.18,
         contextBudget: 6000,
+        maxMessageHistory: 30,
         memoryProvider: 'inherit',
         memoryModel: 'nvidia/nemotron-3-ultra-550b-a55b:free',
         memoryBudget: 5000,
@@ -399,10 +400,14 @@ ${persona.storyMemory || "No prior narrative memory recorded."}
     const sysTokens = estimateTokens(sysPrompt);
     const extraTokens = extraRules ? estimateTokens(extraRules) : 0;
     const budget = settings.contextBudget || 6000;
+    const maxHistory = settings.maxMessageHistory !== undefined ? parseInt(settings.maxMessageHistory, 10) : 30;
     let availableBudget = Math.max(budget - sysTokens - extraTokens - 500, 1000);
 
     const formattedMessages = [];
     for (let i = messages.length - 1; i >= 0; i--) {
+      if (maxHistory > 0 && formattedMessages.length >= maxHistory) {
+        break;
+      }
       const msg = messages[i];
       const role = msg.sender === 'user' ? 'user' : 'assistant';
       const tok = estimateTokens(msg.text) + 4;
@@ -1072,6 +1077,12 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
     document.getElementById('settings-context-budget').value = settings.contextBudget || 6000;
     document.getElementById('context-budget-display').textContent = settings.contextBudget || 6000;
 
+    const maxHistoryEl = document.getElementById('settings-max-history');
+    if (maxHistoryEl) {
+      maxHistoryEl.value = settings.maxMessageHistory !== undefined ? settings.maxMessageHistory : 30;
+      document.getElementById('max-history-display').textContent = settings.maxMessageHistory !== undefined ? settings.maxMessageHistory : 30;
+    }
+
     const maxTokensEl = document.getElementById('settings-max-tokens');
     if (maxTokensEl) {
       maxTokensEl.value = settings.maxTokens || 1200;
@@ -1192,6 +1203,9 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
   const ctxInput = document.getElementById('settings-context-budget');
   if (ctxInput) ctxInput.addEventListener('input', (e) => document.getElementById('context-budget-display').textContent = e.target.value);
 
+  const maxHistoryInput = document.getElementById('settings-max-history');
+  if (maxHistoryInput) maxHistoryInput.addEventListener('input', (e) => document.getElementById('max-history-display').textContent = e.target.value);
+
   const maxTokensInput = document.getElementById('settings-max-tokens');
   if (maxTokensInput) maxTokensInput.addEventListener('input', (e) => document.getElementById('max-tokens-display').textContent = e.target.value);
 
@@ -1216,6 +1230,7 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
       const presencePenalty = parseFloat(presInput?.value || 0.45);
       const repetitionPenalty = parseFloat(repInput?.value || 1.18);
       const contextBudget = parseInt(ctxInput?.value || 6000, 10);
+      const maxMessageHistory = parseInt(document.getElementById('settings-max-history')?.value || 30, 10);
       const maxTokens = parseInt(maxTokensInput?.value || 1200, 10);
 
       const isMemOpenRouter = document.getElementById('card-mem-openrouter')?.classList.contains('active');
@@ -1236,6 +1251,7 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
         presencePenalty,
         repetitionPenalty,
         contextBudget,
+        maxMessageHistory,
         maxTokens,
         memoryProvider,
         memoryModel,

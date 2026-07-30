@@ -343,6 +343,7 @@ module.exports = {
       presencePenalty: 0.45,
       repetitionPenalty: 1.18,
       contextBudget: 6000,
+      maxMessageHistory: 30,
       memoryBudget: 5000,
       memoryProvider: 'inherit',
       memoryModel: 'nvidia/nemotron-3-ultra-550b-a55b:free'
@@ -360,6 +361,7 @@ module.exports = {
       presencePenalty: settings.presencePenalty !== undefined ? parseFloat(settings.presencePenalty) : 0.45,
       repetitionPenalty: settings.repetitionPenalty !== undefined ? parseFloat(settings.repetitionPenalty) : 1.18,
       contextBudget: settings.contextBudget ? parseInt(settings.contextBudget, 10) : 6000,
+      maxMessageHistory: settings.maxMessageHistory ? parseInt(settings.maxMessageHistory, 10) : 30,
       memoryBudget: settings.memoryBudget ? parseInt(settings.memoryBudget, 10) : 5000,
       memoryProvider: settings.memoryProvider || 'inherit',
       memoryModel: settings.memoryModel || 'nvidia/nemotron-3-ultra-550b-a55b:free'

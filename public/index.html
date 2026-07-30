@@ -337,6 +337,12 @@
         </div>
 
         <div class="form-group">
+          <label for="settings-max-history">Max Message History: <span id="max-history-display" style="color: var(--accent-green); font-weight: 600;">30</span> messages</label>
+          <input type="range" id="settings-max-history" min="5" max="100" step="5" value="30" style="width: 100%; cursor: pointer;">
+          <span style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">Maximum number of recent chat messages to include in the AI prompt (subject to token budget).</span>
+        </div>
+
+        <div class="form-group">
           <label for="settings-max-tokens">Max Tokens: <span id="max-tokens-display" style="color: var(--accent-green); font-weight: 600;">1200</span> tokens</label>
           <input type="range" id="settings-max-tokens" min="100" max="8000" step="100" value="1200" style="width: 100%; cursor: pointer;">
           <span style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">The maximum number of tokens to generate in the response.</span>

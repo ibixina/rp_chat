@@ -499,15 +499,18 @@ app.delete("/api/chats/:personaId/messages/:messageId", (req, res) => {
   }
 });
 
-// Helper: build recent messages for AI prompt within a token budget
+// Helper: build recent messages for AI prompt within a token budget and message count limit
 function buildRecentMessages(allMessages, tokenBudget) {
+  const settings = db.getSettings();
   if (!tokenBudget) {
-    tokenBudget = db.getSettings().contextBudget || 6000;
+    tokenBudget = settings.contextBudget || 6000;
   }
+  const maxHistory = settings.maxMessageHistory !== undefined ? parseInt(settings.maxMessageHistory, 10) : 30;
   const result = [];
   let tokensUsed = 0;
 
   for (let i = allMessages.length - 1; i >= 0; i--) {
+    if (maxHistory > 0 && result.length >= maxHistory) break;
     const msg = allMessages[i];
 
     // Skip duplicate assistant messages from being fed into prompt context
