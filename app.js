@@ -638,9 +638,11 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
     if (collapsed) {
       appContainerEl.classList.add('sidebar-collapsed');
       localStorage.setItem('sidebar_collapsed', 'true');
+      if (btnToggleSidebar) btnToggleSidebar.title = 'Expand Side Panel';
     } else {
       appContainerEl.classList.remove('sidebar-collapsed');
       localStorage.setItem('sidebar_collapsed', 'false');
+      if (btnToggleSidebar) btnToggleSidebar.title = 'Fold Side Panel';
     }
   }
 
@@ -1353,6 +1355,7 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
       const item = document.createElement('div');
       item.className = `contact-item ${isSelected ? 'active' : ''}`;
       item.dataset.id = p.id;
+      item.title = p.name;
 
       item.innerHTML = `
         <div class="avatar-wrapper ${offline ? 'offline' : ''}">
