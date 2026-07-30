@@ -163,6 +163,24 @@
           <textarea id="form-first-message" name="firstMessage" rows="3" placeholder="e.g. Hey, good to hear from you!"></textarea>
         </div>
 
+        <!-- Custom System Prompt -->
+        <div class="form-group">
+          <label for="form-system-prompt" style="display: flex; justify-content: space-between; align-items: center;">
+            <span><i class="fa-solid fa-terminal" style="color: var(--accent-green);"></i> Custom System Prompt (Optional)</span>
+            <span style="font-size: 11px; font-weight: normal; color: var(--text-muted);">Leave empty to use default template</span>
+          </label>
+          <textarea id="form-system-prompt" name="systemPrompt" rows="5" placeholder="Enter custom system prompt instructions for this character (supports placeholders: ${name}, ${description}, ${storyMemory})..."></textarea>
+        </div>
+
+        <!-- Custom Memory Summarization Prompt -->
+        <div class="form-group">
+          <label for="form-memory-prompt" style="display: flex; justify-content: space-between; align-items: center;">
+            <span><i class="fa-solid fa-wand-magic-sparkles" style="color: #53bdeb;"></i> Custom Memory Summarization Prompt (Optional)</span>
+            <span style="font-size: 11px; font-weight: normal; color: var(--text-muted);">Leave empty to use default template</span>
+          </label>
+          <textarea id="form-memory-prompt" name="memoryPrompt" rows="4" placeholder="Enter custom instructions for auto-summarizing story memory every 12 messages..."></textarea>
+        </div>
+
         <div class="modal-footer">
           <button type="button" class="btn btn-danger hidden" id="btn-delete-persona" style="margin-right: auto; background-color: #ea4335; color: #ffffff;">
             <i class="fa-solid fa-user-xmark"></i> Delete Contact
@@ -218,7 +236,14 @@
         </div>
         <p class="memory-help-text">This persistent story memory is automatically updated every 12 messages. You can directly edit, add, or delete memory sections below, and your changes will anchor into future AI turns.</p>
         <div class="form-group">
-          <textarea id="memory-textarea" class="memory-edit-textarea" rows="14" placeholder="Enter story memory log..."></textarea>
+          <textarea id="memory-textarea" class="memory-edit-textarea" rows="10" placeholder="Enter story memory log..."></textarea>
+        </div>
+        <div class="form-group" style="margin-top: 14px;">
+          <label for="memory-prompt-textarea" style="font-size: 12.5px; font-weight: 600; color: var(--text-main); margin-bottom: 6px; display: flex; align-items: center; justify-content: space-between;">
+            <span><i class="fa-solid fa-wand-magic-sparkles" style="color: #53bdeb;"></i> Memory Summarization Prompt (Optional)</span>
+            <span style="font-size: 11px; font-weight: normal; color: var(--text-muted);">Leave empty to use default template</span>
+          </label>
+          <textarea id="memory-prompt-textarea" class="memory-edit-textarea" rows="4" placeholder="Enter custom instructions for auto-summarizing story memory for this persona..."></textarea>
         </div>
       </div>
       <div class="modal-footer">
