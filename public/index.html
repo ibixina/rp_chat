@@ -185,6 +185,15 @@
           <textarea id="form-memory-prompt" name="memoryPrompt" rows="4" placeholder="Enter custom instructions for auto-summarizing story memory every 12 messages..."></textarea>
         </div>
 
+        <!-- End Instruction (Appended at the very end of the prompt for highest priority) -->
+        <div class="form-group">
+          <label for="form-end-instruction" style="display: flex; align-items: center; gap: 8px;">
+            <span><i class="fa-solid fa-arrow-down" style="color: #f59e0b;"></i> End Instruction (Optional — Highest Priority)</span>
+          </label>
+          <textarea id="form-end-instruction" name="endInstruction" rows="4" placeholder="Appended at the very end of the system prompt. Models give highest priority to the last instructions they see. Use for critical directives that must override everything else..."></textarea>
+          <span style="font-size: 11px; color: var(--text-muted); margin-top: 4px; display: block;">This text is placed at the very end of the prompt, giving it the strongest weight due to recency bias. Use sparingly for critical rules.</span>
+        </div>
+
         <div class="modal-footer">
           <button type="button" class="btn btn-danger hidden" id="btn-delete-persona" style="margin-right: auto; background-color: #ea4335; color: #ffffff;">
             <i class="fa-solid fa-user-xmark"></i> Delete Contact
