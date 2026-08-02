@@ -779,16 +779,22 @@ app.post("/api/chats/:personaId/stream", async (req, res) => {
 function applyMemoryDelta(existingMemory, deltaText) {
   if (!deltaText || !deltaText.trim()) return existingMemory || '';
 
+  const stripBullet = s => s.replace(/^[-*•\d.]+\s*/, '').trim();
+  const isSkipVal = v => /^(UNCHANGED|NONE|N\/A)\.?$/i.test(stripBullet(v));
+
+  const sectionEnd = '(?=\\n(?:###\\s*)?\\[(?:CURRENT|RELATIONSHIP|PENDING|KEY)|$)';
+  const sectionRe = header => new RegExp('(?:###\\s*)?\\[' + header + '\\]([\\s\\S]*?)' + sectionEnd, 'i');
+
   let currentScene = '';
   let relationshipDynamic = '';
   let pendingHooks = [];
   let keyMilestones = [];
 
   if (existingMemory && existingMemory.trim()) {
-    const sceneMatch = existingMemory.match(/(?:###\s*)?\[CURRENT SCENE & LOCATION\]([\s\S]*?)(?=\n(?:###\s*)?\[|$)/i);
-    const relMatch = existingMemory.match(/(?:###\s*)?\[RELATIONSHIP & EMOTIONAL DYNAMIC\]([\s\S]*?)(?=\n(?:###\s*)?\[|$)/i);
-    const hooksMatch = existingMemory.match(/(?:###\s*)?\[PENDING HOOKS & UNRESOLVED PLANS\]([\s\S]*?)(?=\n(?:###\s*)?\[|$)/i);
-    const milestonesMatch = existingMemory.match(/(?:###\s*)?\[KEY NARRATIVE MILESTONES & ESTABLISHED FACTS\]([\s\S]*?)(?=\n(?:###\s*)?\[|$)/i);
+    const sceneMatch = existingMemory.match(sectionRe('CURRENT SCENE & LOCATION'));
+    const relMatch = existingMemory.match(sectionRe('RELATIONSHIP & EMOTIONAL DYNAMIC'));
+    const hooksMatch = existingMemory.match(sectionRe('PENDING HOOKS & UNRESOLVED PLANS'));
+    const milestonesMatch = existingMemory.match(sectionRe('KEY NARRATIVE MILESTONES & ESTABLISHED FACTS'));
 
     if (sceneMatch) currentScene = sceneMatch[1].trim();
     if (relMatch) relationshipDynamic = relMatch[1].trim();
@@ -804,53 +810,50 @@ function applyMemoryDelta(existingMemory, deltaText) {
     }
   }
 
-  const deltaSceneMatch = deltaText.match(/\[SCENE UPDATE\]([\s\S]*?)(?=\n\[|$)/i);
-  const deltaRelMatch = deltaText.match(/\[EMOTIONAL \/ RELATIONSHIP UPDATE\]([\s\S]*?)(?=\n\[|$)/i);
-  const deltaFactsMatch = deltaText.match(/\[NEW FACTS & MILESTONES\]([\s\S]*?)(?=\n\[|$)/i);
-  const deltaRemovedMatch = deltaText.match(/\[RESOLVED \/ REMOVED FACTS\]([\s\S]*?)(?=\n\[|$)/i);
+  const deltaEnd = '(?=\\n\\[(?:SCENE|EMOTIONAL|NEW FACTS|RESOLVED)|$)';
+  const deltaRe = header => new RegExp('\\[' + header + '\\]([\\s\\S]*?)' + deltaEnd, 'i');
+
+  const deltaSceneMatch = deltaText.match(deltaRe('SCENE UPDATE'));
+  const deltaRelMatch = deltaText.match(deltaRe('EMOTIONAL\\s*[/&]\\s*RELATIONSHIP UPDATE'));
+  const deltaFactsMatch = deltaText.match(deltaRe('NEW FACTS & MILESTONES'));
+  const deltaRemovedMatch = deltaText.match(deltaRe('RESOLVED\\s*[/&]\\s*REMOVED FACTS'));
 
   if (deltaSceneMatch) {
     const val = deltaSceneMatch[1].trim();
-    if (val && !/^UNCHANGED$/i.test(val) && !/^NONE$/i.test(val) && !/^N\/A$/i.test(val)) {
-      currentScene = val;
-    }
+    if (val && !isSkipVal(val)) currentScene = val;
   }
 
   if (deltaRelMatch) {
     const val = deltaRelMatch[1].trim();
-    if (val && !/^UNCHANGED$/i.test(val) && !/^NONE$/i.test(val) && !/^N\/A$/i.test(val)) {
-      relationshipDynamic = val;
-    }
+    if (val && !isSkipVal(val)) relationshipDynamic = val;
   }
 
   if (deltaRemovedMatch) {
     const removedRaw = deltaRemovedMatch[1].trim();
-    if (removedRaw && !/^NONE$/i.test(removedRaw) && !/^N\/A$/i.test(removedRaw)) {
+    if (removedRaw && !isSkipVal(removedRaw)) {
       const removedLines = removedRaw.split('\n')
-        .map(s => s.replace(/^[-*•\d.]+\s*/, '').trim().toLowerCase())
+        .map(s => stripBullet(s).toLowerCase())
         .filter(s => s && s !== 'none' && s !== 'n/a');
       
       if (removedLines.length > 0) {
-        keyMilestones = keyMilestones.filter(item => {
-          const itemLower = item.toLowerCase();
-          return !removedLines.some(rem => itemLower.includes(rem) || rem.includes(itemLower));
-        });
-        pendingHooks = pendingHooks.filter(item => {
-          const itemLower = item.toLowerCase();
-          return !removedLines.some(rem => itemLower.includes(rem) || rem.includes(itemLower));
-        });
+        const matchesRemoval = item => {
+          const clean = stripBullet(item).toLowerCase();
+          return removedLines.some(rem => clean.includes(rem) || rem.includes(clean));
+        };
+        keyMilestones = keyMilestones.filter(item => !matchesRemoval(item));
+        pendingHooks = pendingHooks.filter(item => !matchesRemoval(item));
       }
     }
   }
 
   if (deltaFactsMatch) {
     const factsRaw = deltaFactsMatch[1].trim();
-    if (factsRaw && !/^NONE$/i.test(factsRaw) && !/^N\/A$/i.test(factsRaw)) {
-      const newLines = factsRaw.split('\n').map(s => s.trim()).filter(s => s && !/^NONE$/i.test(s) && !/^N\/A$/i.test(s));
+    if (factsRaw && !isSkipVal(factsRaw)) {
+      const newLines = factsRaw.split('\n').map(s => s.trim()).filter(s => s && !isSkipVal(s));
       newLines.forEach(line => {
         const cleanLine = line.startsWith('-') || line.startsWith('*') ? line : `- ${line}`;
-        const lineContentLower = cleanLine.toLowerCase().replace(/^[-*•\d.]+\s*/, '').trim();
-        if (lineContentLower && !keyMilestones.some(ex => ex.toLowerCase().replace(/^[-*•\d.]+\s*/, '').trim() === lineContentLower)) {
+        const lineContentLower = stripBullet(cleanLine).toLowerCase();
+        if (lineContentLower && !keyMilestones.some(ex => stripBullet(ex).toLowerCase() === lineContentLower)) {
           keyMilestones.push(cleanLine);
         }
       });
@@ -916,10 +919,11 @@ ${formattedTranscript}`,
       `Running memory summarization via ${provider}/${model} for "${persona.name}"...`,
     );
     let finalSummaryPrompt = summaryPrompt;
+    const memoryBudget = db.getSettings().memoryBudget || 5000;
     const reqBody = {
       model: model,
       temperature: 0.3,
-      max_tokens: 600,
+      max_tokens: memoryBudget,
     };
     if (provider === "openrouter") {
       finalSummaryPrompt = prepareOpenRouterMessages(summaryPrompt);
