@@ -623,6 +623,98 @@ ${persona.storyMemory || "No prior narrative memory recorded."}
     return fullText;
   }
 
+  function applyMemoryDelta(existingMemory, deltaText) {
+    if (!deltaText || !deltaText.trim()) return existingMemory || '';
+
+    let currentScene = '';
+    let relationshipDynamic = '';
+    let pendingHooks = [];
+    let keyMilestones = [];
+
+    if (existingMemory && existingMemory.trim()) {
+      const sceneMatch = existingMemory.match(/(?:###\s*)?\[CURRENT SCENE & LOCATION\]([\s\S]*?)(?=\n(?:###\s*)?\[|$)/i);
+      const relMatch = existingMemory.match(/(?:###\s*)?\[RELATIONSHIP & EMOTIONAL DYNAMIC\]([\s\S]*?)(?=\n(?:###\s*)?\[|$)/i);
+      const hooksMatch = existingMemory.match(/(?:###\s*)?\[PENDING HOOKS & UNRESOLVED PLANS\]([\s\S]*?)(?=\n(?:###\s*)?\[|$)/i);
+      const milestonesMatch = existingMemory.match(/(?:###\s*)?\[KEY NARRATIVE MILESTONES & ESTABLISHED FACTS\]([\s\S]*?)(?=\n(?:###\s*)?\[|$)/i);
+
+      if (sceneMatch) currentScene = sceneMatch[1].trim();
+      if (relMatch) relationshipDynamic = relMatch[1].trim();
+      if (hooksMatch) {
+        pendingHooks = hooksMatch[1].trim().split('\n').map(s => s.trim()).filter(Boolean);
+      }
+      if (milestonesMatch) {
+        keyMilestones = milestonesMatch[1].trim().split('\n').map(s => s.trim()).filter(Boolean);
+      }
+
+      if (!sceneMatch && !relMatch && !hooksMatch && !milestonesMatch) {
+        keyMilestones = existingMemory.trim().split('\n').map(s => s.trim()).filter(Boolean);
+      }
+    }
+
+    const deltaSceneMatch = deltaText.match(/\[SCENE UPDATE\]([\s\S]*?)(?=\n\[|$)/i);
+    const deltaRelMatch = deltaText.match(/\[EMOTIONAL \/ RELATIONSHIP UPDATE\]([\s\S]*?)(?=\n\[|$)/i);
+    const deltaFactsMatch = deltaText.match(/\[NEW FACTS & MILESTONES\]([\s\S]*?)(?=\n\[|$)/i);
+    const deltaRemovedMatch = deltaText.match(/\[RESOLVED \/ REMOVED FACTS\]([\s\S]*?)(?=\n\[|$)/i);
+
+    if (deltaSceneMatch) {
+      const val = deltaSceneMatch[1].trim();
+      if (val && !/^UNCHANGED$/i.test(val) && !/^NONE$/i.test(val) && !/^N\/A$/i.test(val)) {
+        currentScene = val;
+      }
+    }
+
+    if (deltaRelMatch) {
+      const val = deltaRelMatch[1].trim();
+      if (val && !/^UNCHANGED$/i.test(val) && !/^NONE$/i.test(val) && !/^N\/A$/i.test(val)) {
+        relationshipDynamic = val;
+      }
+    }
+
+    if (deltaRemovedMatch) {
+      const removedRaw = deltaRemovedMatch[1].trim();
+      if (removedRaw && !/^NONE$/i.test(removedRaw) && !/^N\/A$/i.test(removedRaw)) {
+        const removedLines = removedRaw.split('\n')
+          .map(s => s.replace(/^[-*•\d.]+\s*/, '').trim().toLowerCase())
+          .filter(s => s && s !== 'none' && s !== 'n/a');
+        
+        if (removedLines.length > 0) {
+          keyMilestones = keyMilestones.filter(item => {
+            const itemLower = item.toLowerCase();
+            return !removedLines.some(rem => itemLower.includes(rem) || rem.includes(itemLower));
+          });
+          pendingHooks = pendingHooks.filter(item => {
+            const itemLower = item.toLowerCase();
+            return !removedLines.some(rem => itemLower.includes(rem) || rem.includes(itemLower));
+          });
+        }
+      }
+    }
+
+    if (deltaFactsMatch) {
+      const factsRaw = deltaFactsMatch[1].trim();
+      if (factsRaw && !/^NONE$/i.test(factsRaw) && !/^N\/A$/i.test(factsRaw)) {
+        const newLines = factsRaw.split('\n').map(s => s.trim()).filter(s => s && !/^NONE$/i.test(s) && !/^N\/A$/i.test(s));
+        newLines.forEach(line => {
+          const cleanLine = line.startsWith('-') || line.startsWith('*') ? line : `- ${line}`;
+          const lineContentLower = cleanLine.toLowerCase().replace(/^[-*•\d.]+\s*/, '').trim();
+          if (lineContentLower && !keyMilestones.some(ex => ex.toLowerCase().replace(/^[-*•\d.]+\s*/, '').trim() === lineContentLower)) {
+            keyMilestones.push(cleanLine);
+          }
+        });
+      }
+    }
+
+    const sections = [];
+    sections.push(`### [CURRENT SCENE & LOCATION]\n${currentScene || 'Active conversation.'}`);
+    sections.push(`### [RELATIONSHIP & EMOTIONAL DYNAMIC]\n${relationshipDynamic || 'Developing relationship.'}`);
+    if (pendingHooks.length > 0) {
+      sections.push(`### [PENDING HOOKS & UNRESOLVED PLANS]\n${pendingHooks.join('\n')}`);
+    }
+    sections.push(`### [KEY NARRATIVE MILESTONES & ESTABLISHED FACTS]\n${keyMilestones.length > 0 ? keyMilestones.join('\n') : '- Initial conversation started.'}`);
+
+    return sections.join('\n\n');
+  }
+
   async function triggerMemorySummarization(persona, messages, settings) {
     if (!persona || !messages || memorySummarizingState[persona.id]) return;
     memorySummarizingState[persona.id] = true;
@@ -636,6 +728,8 @@ ${persona.storyMemory || "No prior narrative memory recorded."}
 
       logEvent('MEMORY', `Triggering memory auto-summarization for ${persona.name}`, { provider, model, totalTurns: messages.length });
 
+      const recMsgsStr = messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\n');
+
       let memPrompt = '';
       if (persona.memoryPrompt && persona.memoryPrompt.trim()) {
         let customPrompt = persona.memoryPrompt
@@ -644,7 +738,6 @@ ${persona.storyMemory || "No prior narrative memory recorded."}
           .replaceAll('{name}', persona.name || '')
           .replaceAll('{storyMemory}', persona.storyMemory || 'None');
 
-        const recMsgsStr = messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\n');
         if (customPrompt.includes('{recentMessages}') || customPrompt.includes('${recentMessages}')) {
           customPrompt = customPrompt
             .replaceAll('${recentMessages}', recMsgsStr)
@@ -660,47 +753,59 @@ RECENT MESSAGES:
 ${recMsgsStr}`;
         }
       } else {
-        memPrompt = `Below is the existing story memory log and recent conversational turn history between user and ${persona.name}.
-Analyze the scene progression, physical details, emotional development, and key facts, and produce an updated, comprehensive Markdown Story Memory Log with sections [CURRENT SCENE & LOCATION], [RELATIONSHIP & EMOTIONAL DYNAMIC], [PENDING HOOKS & UNRESOLVED PLANS], and [KEY NARRATIVE MILESTONES & ESTABLISHED FACTS]. Be extremely detailed and preserve all continuity markers.
-
-EXISTING MEMORY:
+        memPrompt = `EXISTING MEMORY LOG:
 ${persona.storyMemory || 'None'}
 
 RECENT MESSAGES:
-${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\n')}`;
+${recMsgsStr}`;
       }
 
+      const sysPrompt = `You are a high-speed story continuity patcher. Your task is to analyze recent dialogue and output ONLY INCREMENTAL DELTA UPDATES to the story memory log. Do NOT output or re-write the full existing memory log. Output ONLY the changed sections in the exact format below:
+
+[SCENE UPDATE]
+(Write 1-2 sentences describing the updated scene/location if changed in recent turns, else write UNCHANGED)
+
+[EMOTIONAL / RELATIONSHIP UPDATE]
+(Write 1-2 sentences describing updated emotional dynamic/relationship if changed, else write UNCHANGED)
+
+[NEW FACTS & MILESTONES]
+- (List only NEW key facts, items, reveals, or decisions established in recent turns. If none, write NONE)
+
+[RESOLVED / REMOVED FACTS]
+- (List any facts or plans from previous memory that are now outdated or resolved. If none, write NONE)`;
+
       const promptMsgs = [
-        { role: 'system', content: 'You are an expert story continuity writer creating structured memory summaries for roleplay.' },
+        { role: 'system', content: sysPrompt },
         { role: 'user', content: memPrompt }
       ];
 
       let streamedText = '';
-      const newMemory = await streamAiCompletion(promptMsgs, {
+      const deltaOutput = await streamAiCompletion(promptMsgs, {
         ...settings,
         provider,
         model,
         temperature: 0.3,
         isMemory: true,
-        maxTokens: settings.memoryBudget || 5000
+        maxTokens: 600
       }, (chunkText) => {
         streamedText += chunkText;
         if (activePersonaId === persona.id && memoryTextarea && !memoryModal?.classList.contains('hidden')) {
-          memoryTextarea.value = streamedText;
+          memoryTextarea.value = `[Patching memory delta...]\n\n${streamedText}`;
         }
       });
 
-      if (newMemory && newMemory.trim()) {
+      if (deltaOutput && deltaOutput.trim()) {
+        const mergedMemory = applyMemoryDelta(persona.storyMemory, deltaOutput.trim());
         const nowIso = new Date().toISOString();
         const lastMsgId = messages && messages.length > 0 ? messages[messages.length - 1].id : null;
-        LocalDB.updateMemory(persona.id, newMemory.trim(), lastMsgId);
+        LocalDB.updateMemory(persona.id, mergedMemory, lastMsgId);
         LocalDB.updatePersona(persona.id, { 
           lastMemorySyncTime: nowIso,
           lastSyncedMessageCount: messages.length
         });
-        logEvent('MEMORY', `Story Memory auto-summarized and saved for ${persona.name}`, { memoryLength: newMemory.trim().length, syncedAtMessageCount: messages.length });
+        logEvent('MEMORY', `Story Memory patched and saved for ${persona.name}`, { deltaLength: deltaOutput.trim().length, mergedLength: mergedMemory.length, syncedAtMessageCount: messages.length });
         if (activePersonaId === persona.id && memoryTextarea) {
-          memoryTextarea.value = newMemory.trim();
+          memoryTextarea.value = mergedMemory;
         }
       }
     } catch (err) {
