@@ -915,8 +915,6 @@ ${formattedTranscript}`,
       "Memory Engine",
       `Running memory summarization via ${provider}/${model} for "${persona.name}"...`,
     );
-    const memoryBudget = db.getSettings().memoryBudget || 5000;
-
     let finalSummaryPrompt = summaryPrompt;
     const reqBody = {
       model: model,
