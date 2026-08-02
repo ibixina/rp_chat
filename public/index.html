@@ -261,9 +261,14 @@
           <textarea id="memory-prompt-textarea" class="memory-edit-textarea" rows="4" placeholder="Enter custom instructions for auto-summarizing story memory for this persona..."></textarea>
         </div>
       </div>
-      <div class="modal-footer">
-        <button type="button" class="btn btn-secondary" id="btn-close-memory">Cancel</button>
-        <button type="button" class="btn btn-primary" id="btn-save-memory">Save Memory</button>
+      <div class="modal-footer" style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+        <button type="button" class="btn btn-secondary" id="btn-force-summarize-memory" title="Manually trigger story memory summarization for recent messages">
+          <i class="fa-solid fa-wand-magic-sparkles" style="color: #53bdeb;"></i> Summarize Now
+        </button>
+        <div style="display: flex; gap: 8px;">
+          <button type="button" class="btn btn-secondary" id="btn-close-memory">Cancel</button>
+          <button type="button" class="btn btn-primary" id="btn-save-memory">Save Memory</button>
+        </div>
       </div>
     </div>
   </div>
@@ -346,8 +351,11 @@
         </div>
 
         <div class="form-group">
-          <label for="settings-context-budget">Context Budget: <span id="context-budget-display" style="color: var(--accent-green); font-weight: 600;">6000</span> tokens</label>
-          <input type="range" id="settings-context-budget" min="2000" max="12000" step="500" value="6000" style="width: 100%; cursor: pointer;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+            <label for="settings-context-budget" style="margin-bottom: 0;">Context Budget (tokens):</label>
+            <input type="number" id="settings-context-budget-num" min="1000" max="200000" step="500" value="6000" style="width: 100px; padding: 2px 6px; font-size: 12px; font-weight: 600; color: var(--accent-green); background: var(--bg-tertiary, #1e1e1e); border: 1px solid var(--border-color, #333); border-radius: 4px; text-align: right;">
+          </div>
+          <input type="range" id="settings-context-budget" min="1000" max="200000" step="500" value="6000" style="width: 100%; cursor: pointer;">
           <span style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">How many tokens of message history to include. Lower = cheaper, higher = more context. Memory covers older events.</span>
         </div>
 
@@ -397,8 +405,11 @@
           </div>
 
           <div class="form-group" style="margin-top: 10px;">
-            <label for="settings-memory-budget">Memory Budget: <span id="memory-budget-display" style="color: var(--accent-green); font-weight: 600;">5000</span> tokens</label>
-            <input type="range" id="settings-memory-budget" min="1000" max="10000" step="500" value="5000" style="width: 100%; cursor: pointer;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+              <label for="settings-memory-budget" style="margin-bottom: 0;">Memory Budget (tokens):</label>
+              <input type="number" id="settings-memory-budget-num" min="1000" max="200000" step="500" value="5000" style="width: 100px; padding: 2px 6px; font-size: 12px; font-weight: 600; color: var(--accent-green); background: var(--bg-tertiary, #1e1e1e); border: 1px solid var(--border-color, #333); border-radius: 4px; text-align: right;">
+            </div>
+            <input type="range" id="settings-memory-budget" min="1000" max="200000" step="500" value="5000" style="width: 100%; cursor: pointer;">
             <span style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">Maximum token allocation reserved for generating and storing story memory summaries.</span>
           </div>
         </div>

@@ -122,6 +122,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return {
           ...p,
           avatarUrl: avatar,
+          storyMemory: this.getEffectiveMemory(p.id),
           lastTimestamp: isNaN(rawTs) ? 0 : rawTs,
           lastMessageText: lastMsg ? lastMsg.text : (p.firstMessage || p.description),
           lastMessageTime: timeStr
@@ -141,6 +142,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const lastMsg = msgs[msgs.length - 1];
         const rawTs = lastMsg && lastMsg.timestamp ? new Date(lastMsg.timestamp).getTime() : (p.createdAt ? new Date(p.createdAt).getTime() : 0);
         p.lastTimestamp = isNaN(rawTs) ? 0 : rawTs;
+        p.storyMemory = this.getEffectiveMemory(id);
       }
       return p;
     },
@@ -154,6 +156,9 @@ document.addEventListener('DOMContentLoaded', () => {
       if (idx > -1) {
         raw.personas[idx] = { ...raw.personas[idx], ...personaData };
       } else {
+        if (personaData.initialStoryMemory === undefined) {
+          personaData.initialStoryMemory = personaData.storyMemory || '';
+        }
         raw.personas.push(personaData);
         if (!raw.messages[personaData.id]) {
           raw.messages[personaData.id] = [
@@ -274,13 +279,36 @@ document.addEventListener('DOMContentLoaded', () => {
       return clean;
     },
 
-    updateMemory(personaId, memoryText) {
+    getEffectiveMemory(personaId) {
       const raw = this.getRaw();
+      const msgs = (raw.messages || {})[personaId] || [];
+      for (let i = msgs.length - 1; i >= 0; i--) {
+        if (msgs[i].memorySnapshot) {
+          return msgs[i].memorySnapshot;
+        }
+      }
+      const p = (raw.personas || []).find(item => item.id === personaId);
+      if (!p) return '';
+      return p.initialStoryMemory !== undefined ? p.initialStoryMemory : (p.storyMemory || '');
+    },
+
+    updateMemory(personaId, memoryText, targetMsgId = null) {
+      const raw = this.getRaw();
+      const msgs = (raw.messages || {})[personaId] || [];
+      if (targetMsgId) {
+        const msg = msgs.find(m => m.id === targetMsgId);
+        if (msg) msg.memorySnapshot = memoryText;
+      } else if (msgs.length > 0) {
+        msgs[msgs.length - 1].memorySnapshot = memoryText;
+      }
       const p = (raw.personas || []).find(item => item.id === personaId);
       if (p) {
+        if (p.initialStoryMemory === undefined) {
+          p.initialStoryMemory = p.storyMemory || '';
+        }
         p.storyMemory = memoryText;
-        this.saveRaw(raw);
       }
+      this.saveRaw(raw);
     },
 
     clearChat(personaId) {
@@ -597,6 +625,10 @@ ${persona.storyMemory || "No prior narrative memory recorded."}
   }
 
   async function triggerMemorySummarization(persona, messages, settings) {
+    if (!persona || !messages || memorySummarizingState[persona.id]) return;
+    memorySummarizingState[persona.id] = true;
+    updateMemorySummarizingUI(persona.id);
+
     try {
       let provider = settings.memoryProvider && settings.memoryProvider !== 'inherit'
         ? settings.memoryProvider.toLowerCase()
@@ -644,6 +676,7 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
         { role: 'user', content: memPrompt }
       ];
 
+      let streamedText = '';
       const newMemory = await streamAiCompletion(promptMsgs, {
         ...settings,
         provider,
@@ -651,20 +684,32 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
         temperature: 0.3,
         isMemory: true,
         maxTokens: settings.memoryBudget || 5000
-      }, () => {});
+      }, (chunkText) => {
+        streamedText += chunkText;
+        if (activePersonaId === persona.id && memoryTextarea && !memoryModal?.classList.contains('hidden')) {
+          memoryTextarea.value = streamedText;
+        }
+      });
 
       if (newMemory && newMemory.trim()) {
         const nowIso = new Date().toISOString();
-        LocalDB.updateMemory(persona.id, newMemory.trim());
+        const lastMsgId = messages && messages.length > 0 ? messages[messages.length - 1].id : null;
+        LocalDB.updateMemory(persona.id, newMemory.trim(), lastMsgId);
         LocalDB.updatePersona(persona.id, { 
           lastMemorySyncTime: nowIso,
           lastSyncedMessageCount: messages.length
         });
         logEvent('MEMORY', `Story Memory auto-summarized and saved for ${persona.name}`, { memoryLength: newMemory.trim().length, syncedAtMessageCount: messages.length });
+        if (activePersonaId === persona.id && memoryTextarea) {
+          memoryTextarea.value = newMemory.trim();
+        }
       }
     } catch (err) {
       logEvent('MEMORY', `Memory auto-summarization skipped: ${err.message}`);
       console.warn('Memory auto-summarization skipped:', err.message);
+    } finally {
+      memorySummarizingState[persona.id] = false;
+      updateMemorySummarizingUI(persona.id);
     }
   }
 
@@ -674,6 +719,52 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
   let personas = [];
   let activePersonaId = null;
   const generatingPersonas = {};
+  const memorySummarizingState = {};
+
+  function updateMemorySummarizingUI(personaId) {
+    const isSummarizing = !!memorySummarizingState[personaId];
+    if (activePersonaId === personaId) {
+      if (btnViewMemory) {
+        btnViewMemory.classList.toggle('btn-brain-in-progress', isSummarizing);
+        const icon = btnViewMemory.querySelector('i');
+        if (icon) icon.classList.toggle('brain-in-progress', isSummarizing);
+        btnViewMemory.title = isSummarizing
+          ? 'Story Memory Log (Summarization in progress...)'
+          : 'View Story Memory Log';
+      }
+
+      if (memoryModal) {
+        const modalIcon = memoryModal.querySelector('.modal-header h3 i');
+        if (modalIcon) modalIcon.classList.toggle('brain-in-progress', isSummarizing);
+
+        const statusContainer = document.getElementById('memory-status-info');
+        if (statusContainer) {
+          if (isSummarizing) {
+            statusContainer.innerHTML = `
+              <div><i class="fa-solid fa-spinner fa-spin" style="color: #53bdeb;"></i> <strong style="color: #53bdeb;">Memory Summarization in Progress...</strong></div>
+              <div><span style="font-size: 11px; color: var(--text-muted); font-style: italic;">Generating updated story log...</span></div>
+            `;
+          } else {
+            const persona = LocalDB.getPersona(activePersonaId);
+            const messages = LocalDB.getMessages(activePersonaId) || [];
+            const totalMsgs = messages.length;
+            const lastSyncedCount = persona?.lastSyncedMessageCount || 0;
+            const msgsSinceSync = Math.max(totalMsgs - lastSyncedCount, 0);
+            const msgsRemaining = Math.max(MEMORY_AUTO_SYNC_INTERVAL - msgsSinceSync, 0);
+            const timeStr = persona?.lastMemorySyncTime
+              ? new Date(persona.lastMemorySyncTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', month: 'short', day: 'numeric' })
+              : (totalMsgs >= MEMORY_AUTO_SYNC_INTERVAL ? 'Initial auto-sync' : 'Never');
+            const turnStr = msgsRemaining === 0 ? 'Syncing on next message' : `${msgsRemaining} message${msgsRemaining === 1 ? '' : 's'} left`;
+
+            statusContainer.innerHTML = `
+              <div><i class="fa-solid fa-clock-rotate-left" style="color: var(--accent-green);"></i> <strong>Last Synced:</strong> <span id="memory-last-sync-time">${timeStr}</span></div>
+              <div><i class="fa-solid fa-hourglass-half" style="color: #53bdeb;"></i> <strong>Next Auto-Sync:</strong> <span id="memory-turns-remaining">${turnStr}</span></div>
+            `;
+          }
+        }
+      }
+    }
+  }
 
   const contactListEl = document.getElementById('contact-list');
   const searchInput = document.getElementById('search-input');
@@ -1117,8 +1208,13 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
     document.getElementById('settings-rep-penalty').value = settings.repetitionPenalty !== undefined ? settings.repetitionPenalty : 1.18;
     document.getElementById('rep-penalty-display').textContent = settings.repetitionPenalty !== undefined ? settings.repetitionPenalty : 1.18;
 
-    document.getElementById('settings-context-budget').value = settings.contextBudget || 6000;
-    document.getElementById('context-budget-display').textContent = settings.contextBudget || 6000;
+    const contextBudgetValue = settings.contextBudget || 6000;
+    const ctxSliderEl = document.getElementById('settings-context-budget');
+    const ctxNumEl = document.getElementById('settings-context-budget-num');
+    const ctxDisplayEl = document.getElementById('context-budget-display');
+    if (ctxSliderEl) ctxSliderEl.value = contextBudgetValue;
+    if (ctxNumEl) ctxNumEl.value = contextBudgetValue;
+    if (ctxDisplayEl) ctxDisplayEl.textContent = contextBudgetValue;
 
     const maxHistoryEl = document.getElementById('settings-max-history');
     if (maxHistoryEl) {
@@ -1135,8 +1231,10 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
 
     const memBudget = settings.memoryBudget || 5000;
     const memBudgetInputEl = document.getElementById('settings-memory-budget');
+    const memBudgetNumEl = document.getElementById('settings-memory-budget-num');
     const memBudgetDisplayEl = document.getElementById('memory-budget-display');
     if (memBudgetInputEl) memBudgetInputEl.value = memBudget;
+    if (memBudgetNumEl) memBudgetNumEl.value = memBudget;
     if (memBudgetDisplayEl) memBudgetDisplayEl.textContent = memBudget;
 
     const memProv = settings.memoryProvider || 'inherit';
@@ -1244,7 +1342,23 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
   if (repInput) repInput.addEventListener('input', (e) => document.getElementById('rep-penalty-display').textContent = e.target.value);
 
   const ctxInput = document.getElementById('settings-context-budget');
-  if (ctxInput) ctxInput.addEventListener('input', (e) => document.getElementById('context-budget-display').textContent = e.target.value);
+  const ctxNumInput = document.getElementById('settings-context-budget-num');
+  const ctxDisplay = document.getElementById('context-budget-display');
+  if (ctxInput) {
+    ctxInput.addEventListener('input', (e) => {
+      if (ctxNumInput) ctxNumInput.value = e.target.value;
+      if (ctxDisplay) ctxDisplay.textContent = e.target.value;
+    });
+  }
+  if (ctxNumInput) {
+    ctxNumInput.addEventListener('input', (e) => {
+      const val = parseInt(e.target.value, 10);
+      if (!isNaN(val)) {
+        if (ctxInput) ctxInput.value = Math.min(200000, Math.max(1000, val));
+        if (ctxDisplay) ctxDisplay.textContent = val;
+      }
+    });
+  }
 
   const maxHistoryInput = document.getElementById('settings-max-history');
   if (maxHistoryInput) maxHistoryInput.addEventListener('input', (e) => document.getElementById('max-history-display').textContent = e.target.value);
@@ -1252,9 +1366,24 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
   const maxTokensInput = document.getElementById('settings-max-tokens');
   if (maxTokensInput) maxTokensInput.addEventListener('input', (e) => document.getElementById('max-tokens-display').textContent = e.target.value);
 
-
   const memBudgetSlider = document.getElementById('settings-memory-budget');
-  if (memBudgetSlider) memBudgetSlider.addEventListener('input', (e) => document.getElementById('memory-budget-display').textContent = e.target.value);
+  const memBudgetNumInput = document.getElementById('settings-memory-budget-num');
+  const memBudgetDisplay = document.getElementById('memory-budget-display');
+  if (memBudgetSlider) {
+    memBudgetSlider.addEventListener('input', (e) => {
+      if (memBudgetNumInput) memBudgetNumInput.value = e.target.value;
+      if (memBudgetDisplay) memBudgetDisplay.textContent = e.target.value;
+    });
+  }
+  if (memBudgetNumInput) {
+    memBudgetNumInput.addEventListener('input', (e) => {
+      const val = parseInt(e.target.value, 10);
+      if (!isNaN(val)) {
+        if (memBudgetSlider) memBudgetSlider.value = Math.min(200000, Math.max(1000, val));
+        if (memBudgetDisplay) memBudgetDisplay.textContent = val;
+      }
+    });
+  }
 
   // Settings Save Listener
   if (btnSaveSettings) {
@@ -1272,7 +1401,7 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
       const frequencyPenalty = parseFloat(freqInput?.value || 0.65);
       const presencePenalty = parseFloat(presInput?.value || 0.45);
       const repetitionPenalty = parseFloat(repInput?.value || 1.18);
-      const contextBudget = parseInt(ctxInput?.value || 6000, 10);
+      const contextBudget = parseInt(ctxNumInput?.value || ctxInput?.value || 6000, 10);
       const maxMessageHistory = parseInt(document.getElementById('settings-max-history')?.value || 30, 10);
       const maxTokens = parseInt(maxTokensInput?.value || 1200, 10);
 
@@ -1282,7 +1411,7 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
       const memModelPreset = document.getElementById('settings-memory-model-preset')?.value;
       const memModelCustom = document.getElementById('settings-memory-model-custom')?.value.trim();
       const memoryModel = (memModelPreset === 'custom' && memModelCustom) ? memModelCustom : memModelPreset;
-      const memoryBudget = parseInt(document.getElementById('settings-memory-budget')?.value || 5000, 10);
+      const memoryBudget = parseInt(memBudgetNumInput?.value || document.getElementById('settings-memory-budget')?.value || 5000, 10);
 
       LocalDB.saveSettings({
         openrouterKey,
@@ -1500,6 +1629,7 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
     currentNameEl.textContent = persona.name;
 
     updateHeaderStatus(personaId);
+    updateMemorySummarizingUI(personaId);
 
     renderContactList(LocalDB.getPersonas());
     renderChatFeed(personaId);
@@ -2216,12 +2346,27 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
         turnsLeftEl.textContent = msgsRemaining === 0 ? 'Syncing on next message' : `${msgsRemaining} message${msgsRemaining === 1 ? '' : 's'} left`;
       }
 
+      updateMemorySummarizingUI(activePersonaId);
       showModal(memoryModal);
     });
   }
 
   if (btnCloseMemoryModal) btnCloseMemoryModal.addEventListener('click', () => hideModal(memoryModal));
   if (btnCloseMemory) btnCloseMemory.addEventListener('click', () => hideModal(memoryModal));
+
+  const btnForceSummarize = document.getElementById('btn-force-summarize-memory');
+  if (btnForceSummarize) {
+    btnForceSummarize.addEventListener('click', async () => {
+      if (!activePersonaId || memorySummarizingState[activePersonaId]) return;
+      const persona = LocalDB.getPersona(activePersonaId);
+      const messages = LocalDB.getMessages(activePersonaId) || [];
+      const settings = LocalDB.getSettings();
+      if (persona && messages.length > 0) {
+        logEvent('MEMORY', `Manual memory summarization triggered by user for ${persona.name}`);
+        await triggerMemorySummarization(persona, messages, settings);
+      }
+    });
+  }
 
   if (btnSaveMemory) {
     btnSaveMemory.addEventListener('click', () => {
@@ -2231,7 +2376,8 @@ ${messages.slice(-12).map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\
       const memoryPromptTextarea = document.getElementById('memory-prompt-textarea');
       const memoryPromptVal = memoryPromptTextarea ? memoryPromptTextarea.value.trim() : '';
 
-      LocalDB.updateMemory(activePersonaId, memoryTextarea.value);
+      const lastMsgId = msgs && msgs.length > 0 ? msgs[msgs.length - 1].id : null;
+      LocalDB.updateMemory(activePersonaId, memoryTextarea.value, lastMsgId);
       LocalDB.updatePersona(activePersonaId, {
         lastMemorySyncTime: nowIso,
         lastSyncedMessageCount: msgs.length,

@@ -898,7 +898,8 @@ Please produce the updated, structured Story Memory Log:`,
         return;
       }
 
-      db.updateMemory(personaId, newMemory.trim(), messages.length);
+      const lastMsg = messages && messages.length > 0 ? messages[messages.length - 1] : null;
+      db.updateMemory(personaId, newMemory.trim(), lastMsg ? lastMsg.id : null);
       console.log(
         `[Memory Engine] Story memory successfully updated for ${persona.name}`,
       );

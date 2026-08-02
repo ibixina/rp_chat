@@ -196,9 +196,27 @@ module.exports = {
     return cachedPersonaSummaries;
   },
 
+  getEffectiveMemory(personaId) {
+    const db = readDB();
+    const msgs = db.messages[personaId] || [];
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i].memorySnapshot) {
+        return msgs[i].memorySnapshot;
+      }
+    }
+    const persona = db.personas.find(p => p.id === personaId);
+    if (!persona) return '';
+    return persona.initialStoryMemory !== undefined ? persona.initialStoryMemory : (persona.storyMemory || '');
+  },
+
   getPersona(id) {
     const db = readDB();
-    return db.personas.find(p => p.id === id);
+    const p = db.personas.find(p => p.id === id);
+    if (!p) return null;
+    return {
+      ...p,
+      storyMemory: this.getEffectiveMemory(id)
+    };
   },
 
   savePersona(persona) {
@@ -323,12 +341,21 @@ module.exports = {
     }
   },
 
-  updateMemory(personaId, memoryText, msgCount) {
+  updateMemory(personaId, memoryText, targetMsgId) {
     const db = readDB();
     const persona = db.personas.find(p => p.id === personaId);
+    const msgs = db.messages[personaId] || [];
+    if (targetMsgId) {
+      const msg = msgs.find(m => m.id === targetMsgId);
+      if (msg) msg.memorySnapshot = memoryText;
+    } else if (msgs.length > 0) {
+      msgs[msgs.length - 1].memorySnapshot = memoryText;
+    }
     if (persona) {
+      if (persona.initialStoryMemory === undefined) {
+        persona.initialStoryMemory = persona.storyMemory || '';
+      }
       persona.storyMemory = memoryText;
-      if (msgCount !== undefined) persona.lastMemoryMsgCount = msgCount;
       flushSync();
     }
   },

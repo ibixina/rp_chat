@@ -1168,3 +1168,45 @@ body, html {
   font-weight: 600;
 }
 
+/* Brain Summarization In-Progress Pulse & Glow Animation */
+@keyframes brainPulse {
+  0% {
+    transform: scale(1);
+    color: var(--accent-green, #00a884);
+    filter: drop-shadow(0 0 2px var(--accent-green, #00a884));
+  }
+  50% {
+    transform: scale(1.25);
+    color: #53bdeb;
+    filter: drop-shadow(0 0 10px #53bdeb);
+  }
+  100% {
+    transform: scale(1);
+    color: var(--accent-green, #00a884);
+    filter: drop-shadow(0 0 2px var(--accent-green, #00a884));
+  }
+}
+
+.brain-in-progress {
+  animation: brainPulse 1.2s infinite ease-in-out !important;
+  color: var(--accent-green, #00a884) !important;
+  display: inline-block;
+}
+
+.btn-brain-in-progress {
+  position: relative;
+}
+
+.btn-brain-in-progress::after {
+  content: '';
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 8px;
+  height: 8px;
+  background-color: #53bdeb;
+  border-radius: 50%;
+  box-shadow: 0 0 6px #53bdeb;
+  animation: brainPulse 1.2s infinite ease-in-out;
+}
+
