@@ -81,6 +81,8 @@ document.addEventListener('DOMContentLoaded', () => {
       return {
         provider: 'openrouter',
         model: 'sao10k/l3.3-euryale-70b',
+        lastOpenRouterModel: 'sao10k/l3.3-euryale-70b',
+        lastDeepInfraModel: 'NousResearch/Hermes-3-Llama-3.1-70B',
         temperature: 0.68,
         frequencyPenalty: 0.65,
         presencePenalty: 0.45,
@@ -89,6 +91,8 @@ document.addEventListener('DOMContentLoaded', () => {
         maxMessageHistory: 30,
         memoryProvider: 'inherit',
         memoryModel: 'nvidia/nemotron-3-ultra-550b-a55b:free',
+        lastMemOpenRouterModel: 'nvidia/nemotron-3-ultra-550b-a55b:free',
+        lastMemDeepInfraModel: 'NousResearch/Hermes-3-Llama-3.1-70B',
         memoryBudget: 5000,
         openrouterKey: '',
         deepinfraKey: '',
@@ -1273,6 +1277,66 @@ ${recMsgsStr}`;
     }
   }
 
+  let settingsProviderModels = {
+    openrouter: 'sao10k/l3.3-euryale-70b',
+    deepinfra: 'NousResearch/Hermes-3-Llama-3.1-70B'
+  };
+
+  let settingsMemProviderModels = {
+    openrouter: 'nvidia/nemotron-3-ultra-550b-a55b:free',
+    deepinfra: 'NousResearch/Hermes-3-Llama-3.1-70B'
+  };
+
+  function setModelUI(modelVal) {
+    const modelPreset = document.getElementById('settings-model-preset');
+    const modelCustom = document.getElementById('settings-model-custom');
+    if (!modelPreset) return;
+
+    const hasOpt = Array.from(modelPreset.options).some(o => o.value === modelVal);
+    if (hasOpt) {
+      modelPreset.value = modelVal;
+      modelCustom?.classList.add('hidden');
+      if (modelCustom) modelCustom.value = '';
+    } else {
+      modelPreset.value = 'custom';
+      modelCustom?.classList.remove('hidden');
+      if (modelCustom) modelCustom.value = modelVal || '';
+    }
+  }
+
+  function getModelFromUI() {
+    const modelPreset = document.getElementById('settings-model-preset');
+    const modelCustom = document.getElementById('settings-model-custom');
+    const presetVal = modelPreset?.value;
+    const customVal = modelCustom?.value.trim();
+    return (presetVal === 'custom' && customVal) ? customVal : (presetVal !== 'custom' ? presetVal : customVal || '');
+  }
+
+  function setMemModelUI(modelVal) {
+    const memModelPreset = document.getElementById('settings-memory-model-preset');
+    const memModelCustom = document.getElementById('settings-memory-model-custom');
+    if (!memModelPreset) return;
+
+    const hasOpt = Array.from(memModelPreset.options).some(o => o.value === modelVal);
+    if (hasOpt) {
+      memModelPreset.value = modelVal;
+      memModelCustom?.classList.add('hidden');
+      if (memModelCustom) memModelCustom.value = '';
+    } else {
+      memModelPreset.value = 'custom';
+      memModelCustom?.classList.remove('hidden');
+      if (memModelCustom) memModelCustom.value = modelVal || '';
+    }
+  }
+
+  function getMemModelFromUI() {
+    const memModelPreset = document.getElementById('settings-memory-model-preset');
+    const memModelCustom = document.getElementById('settings-memory-model-custom');
+    const presetVal = memModelPreset?.value;
+    const customVal = memModelCustom?.value.trim();
+    return (presetVal === 'custom' && customVal) ? customVal : (presetVal !== 'custom' ? presetVal : customVal || '');
+  }
+
   function loadSettingsIntoUI() {
     const settings = LocalDB.getSettings();
 
@@ -1292,19 +1356,11 @@ ${recMsgsStr}`;
       cardDeepInfra?.classList.remove('active');
     }
 
-    const modelPreset = document.getElementById('settings-model-preset');
-    const modelCustom = document.getElementById('settings-model-custom');
-    if (modelPreset) {
-      const hasOpt = Array.from(modelPreset.options).some(o => o.value === settings.model);
-      if (hasOpt) {
-        modelPreset.value = settings.model;
-        modelCustom?.classList.add('hidden');
-      } else {
-        modelPreset.value = 'custom';
-        modelCustom?.classList.remove('hidden');
-        if (modelCustom) modelCustom.value = settings.model || '';
-      }
-    }
+    settingsProviderModels.openrouter = settings.lastOpenRouterModel || (provider === 'openrouter' ? settings.model : 'sao10k/l3.3-euryale-70b');
+    settingsProviderModels.deepinfra = settings.lastDeepInfraModel || (provider === 'deepinfra' ? settings.model : 'NousResearch/Hermes-3-Llama-3.1-70B');
+
+    const currentActiveModel = settingsProviderModels[provider] || settings.model;
+    setModelUI(currentActiveModel);
 
     document.getElementById('settings-temp').value = settings.temperature !== undefined ? settings.temperature : 0.68;
     document.getElementById('temp-val-display').textContent = settings.temperature !== undefined ? settings.temperature : 0.68;
@@ -1338,7 +1394,6 @@ ${recMsgsStr}`;
       document.getElementById('max-tokens-display').textContent = settings.maxTokens || 1200;
     }
 
-
     const memBudget = settings.memoryBudget || 5000;
     const memBudgetInputEl = document.getElementById('settings-memory-budget');
     const memBudgetNumEl = document.getElementById('settings-memory-budget-num');
@@ -1360,20 +1415,41 @@ ${recMsgsStr}`;
     if (groupMemoryModel) {
       groupMemoryModel.style.display = memProv === 'inherit' ? 'none' : 'block';
     }
+
+    settingsMemProviderModels.openrouter = settings.lastMemOpenRouterModel || (memProv === 'openrouter' ? settings.memoryModel : 'nvidia/nemotron-3-ultra-550b-a55b:free');
+    settingsMemProviderModels.deepinfra = settings.lastMemDeepInfraModel || (memProv === 'deepinfra' ? settings.memoryModel : 'NousResearch/Hermes-3-Llama-3.1-70B');
+
+    if (memProv !== 'inherit') {
+      const currentMemActiveModel = settingsMemProviderModels[memProv] || settings.memoryModel;
+      setMemModelUI(currentMemActiveModel);
+    }
   }
 
   // Provider Selection Event Listeners in Settings
   const cardOpenRouter = document.getElementById('card-openrouter');
   const cardDeepInfra = document.getElementById('card-deepinfra');
+
+  function switchProvider(newProvider) {
+    const currentProvider = cardDeepInfra?.classList.contains('active') ? 'deepinfra' : 'openrouter';
+    if (currentProvider === newProvider) return;
+
+    settingsProviderModels[currentProvider] = getModelFromUI();
+
+    if (newProvider === 'deepinfra') {
+      cardOpenRouter?.classList.remove('active');
+      cardDeepInfra?.classList.add('active');
+    } else {
+      cardOpenRouter?.classList.add('active');
+      cardDeepInfra?.classList.remove('active');
+    }
+
+    const nextModel = settingsProviderModels[newProvider] || (newProvider === 'deepinfra' ? 'NousResearch/Hermes-3-Llama-3.1-70B' : 'sao10k/l3.3-euryale-70b');
+    setModelUI(nextModel);
+  }
+
   if (cardOpenRouter && cardDeepInfra) {
-    cardOpenRouter.addEventListener('click', () => {
-      cardOpenRouter.classList.add('active');
-      cardDeepInfra.classList.remove('active');
-    });
-    cardDeepInfra.addEventListener('click', () => {
-      cardDeepInfra.classList.add('active');
-      cardOpenRouter.classList.remove('active');
-    });
+    cardOpenRouter.addEventListener('click', () => switchProvider('openrouter'));
+    cardDeepInfra.addEventListener('click', () => switchProvider('deepinfra'));
   }
 
   // Memory Route Selection Event Listeners
@@ -1382,59 +1458,80 @@ ${recMsgsStr}`;
   const cardMemDeepInfra = document.getElementById('card-mem-deepinfra');
   const groupMemoryModel = document.getElementById('group-memory-model');
 
-  function updateMemoryGroupVisibility() {
+  function switchMemProvider(newMemProv) {
+    const currentMemProv = cardMemDeepInfra?.classList.contains('active') ? 'deepinfra' : (cardMemOpenRouter?.classList.contains('active') ? 'openrouter' : 'inherit');
+
+    if (currentMemProv !== 'inherit') {
+      settingsMemProviderModels[currentMemProv] = getMemModelFromUI();
+    }
+
+    cardMemInherit?.classList.toggle('active', newMemProv === 'inherit');
+    cardMemOpenRouter?.classList.toggle('active', newMemProv === 'openrouter');
+    cardMemDeepInfra?.classList.toggle('active', newMemProv === 'deepinfra');
+
     if (groupMemoryModel) {
-      const isInherit = cardMemInherit?.classList.contains('active');
-      groupMemoryModel.style.display = isInherit ? 'none' : 'block';
+      groupMemoryModel.style.display = newMemProv === 'inherit' ? 'none' : 'block';
+    }
+
+    if (newMemProv !== 'inherit') {
+      const nextMemModel = settingsMemProviderModels[newMemProv] || (newMemProv === 'deepinfra' ? 'NousResearch/Hermes-3-Llama-3.1-70B' : 'nvidia/nemotron-3-ultra-550b-a55b:free');
+      setMemModelUI(nextMemModel);
     }
   }
 
-  if (cardMemInherit) {
-    cardMemInherit.addEventListener('click', () => {
-      cardMemInherit.classList.add('active');
-      cardMemOpenRouter?.classList.remove('active');
-      cardMemDeepInfra?.classList.remove('active');
-      updateMemoryGroupVisibility();
-    });
-  }
-  if (cardMemOpenRouter) {
-    cardMemOpenRouter.addEventListener('click', () => {
-      cardMemOpenRouter.classList.add('active');
-      cardMemInherit?.classList.remove('active');
-      cardMemDeepInfra?.classList.remove('active');
-      updateMemoryGroupVisibility();
-    });
-  }
-  if (cardMemDeepInfra) {
-    cardMemDeepInfra.addEventListener('click', () => {
-      cardMemDeepInfra.classList.add('active');
-      cardMemInherit?.classList.remove('active');
-      cardMemOpenRouter?.classList.remove('active');
-      updateMemoryGroupVisibility();
-    });
-  }
+  if (cardMemInherit) cardMemInherit.addEventListener('click', () => switchMemProvider('inherit'));
+  if (cardMemOpenRouter) cardMemOpenRouter.addEventListener('click', () => switchMemProvider('openrouter'));
+  if (cardMemDeepInfra) cardMemDeepInfra.addEventListener('click', () => switchMemProvider('deepinfra'));
 
   const modelPresetEl = document.getElementById('settings-model-preset');
   const modelCustomEl = document.getElementById('settings-model-custom');
-  if (modelPresetEl && modelCustomEl) {
+
+  function updateCurrentProviderModelTracking() {
+    const activeProv = cardDeepInfra?.classList.contains('active') ? 'deepinfra' : 'openrouter';
+    settingsProviderModels[activeProv] = getModelFromUI();
+  }
+
+  if (modelPresetEl) {
     modelPresetEl.addEventListener('change', (e) => {
       if (e.target.value === 'custom') {
-        modelCustomEl.classList.remove('hidden');
+        modelCustomEl?.classList.remove('hidden');
       } else {
-        modelCustomEl.classList.add('hidden');
+        modelCustomEl?.classList.add('hidden');
       }
+      updateCurrentProviderModelTracking();
+    });
+  }
+
+  if (modelCustomEl) {
+    modelCustomEl.addEventListener('input', () => {
+      updateCurrentProviderModelTracking();
     });
   }
 
   const memModelPresetEl = document.getElementById('settings-memory-model-preset');
   const memModelCustomEl = document.getElementById('settings-memory-model-custom');
-  if (memModelPresetEl && memModelCustomEl) {
+
+  function updateCurrentMemProviderModelTracking() {
+    const activeMemProv = cardMemDeepInfra?.classList.contains('active') ? 'deepinfra' : (cardMemOpenRouter?.classList.contains('active') ? 'openrouter' : 'inherit');
+    if (activeMemProv !== 'inherit') {
+      settingsMemProviderModels[activeMemProv] = getMemModelFromUI();
+    }
+  }
+
+  if (memModelPresetEl) {
     memModelPresetEl.addEventListener('change', (e) => {
       if (e.target.value === 'custom') {
-        memModelCustomEl.classList.remove('hidden');
+        memModelCustomEl?.classList.remove('hidden');
       } else {
-        memModelCustomEl.classList.add('hidden');
+        memModelCustomEl?.classList.add('hidden');
       }
+      updateCurrentMemProviderModelTracking();
+    });
+  }
+
+  if (memModelCustomEl) {
+    memModelCustomEl.addEventListener('input', () => {
+      updateCurrentMemProviderModelTracking();
     });
   }
 
@@ -1503,9 +1600,10 @@ ${recMsgsStr}`;
       const isDeepInfra = cardDeepInfra?.classList.contains('active');
       const provider = isDeepInfra ? 'deepinfra' : 'openrouter';
 
-      const modelPresetVal = modelPresetEl?.value;
-      const modelCustomVal = modelCustomEl?.value.trim();
-      const model = (modelPresetVal === 'custom' && modelCustomVal) ? modelCustomVal : modelPresetVal;
+      settingsProviderModels[provider] = getModelFromUI();
+      const model = settingsProviderModels[provider];
+      const lastOpenRouterModel = settingsProviderModels['openrouter'];
+      const lastDeepInfraModel = settingsProviderModels['deepinfra'];
 
       const temperature = parseFloat(tempInput?.value || 0.68);
       const frequencyPenalty = parseFloat(freqInput?.value || 0.65);
@@ -1518,9 +1616,13 @@ ${recMsgsStr}`;
       const isMemOpenRouter = document.getElementById('card-mem-openrouter')?.classList.contains('active');
       const isMemDeepInfra = document.getElementById('card-mem-deepinfra')?.classList.contains('active');
       const memoryProvider = isMemDeepInfra ? 'deepinfra' : (isMemOpenRouter ? 'openrouter' : 'inherit');
-      const memModelPreset = document.getElementById('settings-memory-model-preset')?.value;
-      const memModelCustom = document.getElementById('settings-memory-model-custom')?.value.trim();
-      const memoryModel = (memModelPreset === 'custom' && memModelCustom) ? memModelCustom : memModelPreset;
+
+      if (memoryProvider !== 'inherit') {
+        settingsMemProviderModels[memoryProvider] = getMemModelFromUI();
+      }
+      const memoryModel = memoryProvider === 'inherit' ? 'nvidia/nemotron-3-ultra-550b-a55b:free' : settingsMemProviderModels[memoryProvider];
+      const lastMemOpenRouterModel = settingsMemProviderModels['openrouter'];
+      const lastMemDeepInfraModel = settingsMemProviderModels['deepinfra'];
       const memoryBudget = parseInt(memBudgetNumInput?.value || document.getElementById('settings-memory-budget')?.value || 5000, 10);
 
       LocalDB.saveSettings({
@@ -1528,6 +1630,8 @@ ${recMsgsStr}`;
         deepinfraKey,
         provider,
         model,
+        lastOpenRouterModel,
+        lastDeepInfraModel,
         temperature,
         frequencyPenalty,
         presencePenalty,
@@ -1537,6 +1641,8 @@ ${recMsgsStr}`;
         maxTokens,
         memoryProvider,
         memoryModel,
+        lastMemOpenRouterModel,
+        lastMemDeepInfraModel,
         memoryBudget
       });
 

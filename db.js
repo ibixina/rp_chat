@@ -365,6 +365,8 @@ module.exports = {
     const defaults = {
       provider: 'openrouter',
       model: 'sao10k/l3.3-euryale-70b',
+      lastOpenRouterModel: 'sao10k/l3.3-euryale-70b',
+      lastDeepInfraModel: 'NousResearch/Hermes-3-Llama-3.1-70B',
       temperature: 0.68,
       frequencyPenalty: 0.65,
       presencePenalty: 0.45,
@@ -373,7 +375,9 @@ module.exports = {
       maxMessageHistory: 30,
       memoryBudget: 5000,
       memoryProvider: 'inherit',
-      memoryModel: 'nvidia/nemotron-3-ultra-550b-a55b:free'
+      memoryModel: 'nvidia/nemotron-3-ultra-550b-a55b:free',
+      lastMemOpenRouterModel: 'nvidia/nemotron-3-ultra-550b-a55b:free',
+      lastMemDeepInfraModel: 'NousResearch/Hermes-3-Llama-3.1-70B'
     };
     return { ...defaults, ...(db.settings || {}) };
   },
@@ -383,6 +387,8 @@ module.exports = {
     db.settings = {
       provider: settings.provider || 'openrouter',
       model: settings.model || 'sao10k/l3.3-euryale-70b',
+      lastOpenRouterModel: settings.lastOpenRouterModel || 'sao10k/l3.3-euryale-70b',
+      lastDeepInfraModel: settings.lastDeepInfraModel || 'NousResearch/Hermes-3-Llama-3.1-70B',
       temperature: settings.temperature !== undefined ? parseFloat(settings.temperature) : 0.68,
       frequencyPenalty: settings.frequencyPenalty !== undefined ? parseFloat(settings.frequencyPenalty) : 0.65,
       presencePenalty: settings.presencePenalty !== undefined ? parseFloat(settings.presencePenalty) : 0.45,
@@ -391,7 +397,9 @@ module.exports = {
       maxMessageHistory: settings.maxMessageHistory ? parseInt(settings.maxMessageHistory, 10) : 30,
       memoryBudget: settings.memoryBudget ? parseInt(settings.memoryBudget, 10) : 5000,
       memoryProvider: settings.memoryProvider || 'inherit',
-      memoryModel: settings.memoryModel || 'nvidia/nemotron-3-ultra-550b-a55b:free'
+      memoryModel: settings.memoryModel || 'nvidia/nemotron-3-ultra-550b-a55b:free',
+      lastMemOpenRouterModel: settings.lastMemOpenRouterModel || 'nvidia/nemotron-3-ultra-550b-a55b:free',
+      lastMemDeepInfraModel: settings.lastMemDeepInfraModel || 'NousResearch/Hermes-3-Llama-3.1-70B'
     };
     flushSync();
     return db.settings;
