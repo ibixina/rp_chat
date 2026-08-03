@@ -2036,11 +2036,13 @@ ${recMsgsStr}`;
     if (bubble.classList.contains('editing')) return;
     bubble.classList.add('editing');
 
+    const initialScrollTop = chatFeedEl ? chatFeedEl.scrollTop : 0;
+
     const originalText = textEl.dataset.rawText || msg.text;
     textEl.textContent = originalText;
     textEl.contentEditable = 'true';
     textEl.classList.add('message-text-editing');
-    textEl.focus();
+    textEl.focus({ preventScroll: true });
 
     try {
       const range = document.createRange();
@@ -2051,11 +2053,17 @@ ${recMsgsStr}`;
       sel.addRange(range);
     } catch (e) {}
 
+    if (chatFeedEl) {
+      chatFeedEl.scrollTop = initialScrollTop;
+    }
+
     let isFinished = false;
 
     function saveAndExit(revert = false) {
       if (isFinished) return;
       isFinished = true;
+
+      const exitScrollTop = chatFeedEl ? chatFeedEl.scrollTop : 0;
 
       textEl.removeEventListener('blur', handleBlur);
       textEl.removeEventListener('keydown', handleKeyDown);
@@ -2073,6 +2081,10 @@ ${recMsgsStr}`;
       } else {
         textEl.dataset.rawText = originalText;
         textEl.innerHTML = formatMessageText(originalText);
+      }
+
+      if (chatFeedEl) {
+        chatFeedEl.scrollTop = exitScrollTop;
       }
     }
 
