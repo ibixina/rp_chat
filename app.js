@@ -1757,6 +1757,10 @@ ${recMsgsStr}`;
   }
 
   function renderCurrentMessageBatch(keepScrollPosition = false) {
+    if (activePersonaId) {
+      activeMessagesList = LocalDB.getMessages(activePersonaId) || [];
+    }
+
     const oldScrollHeight = chatFeedEl.scrollHeight;
     const oldScrollTop = chatFeedEl.scrollTop;
 
@@ -1791,6 +1795,9 @@ ${recMsgsStr}`;
   }
 
   function loadOlderMessages() {
+    if (activePersonaId) {
+      activeMessagesList = LocalDB.getMessages(activePersonaId) || [];
+    }
     if (displayedMessageCount >= activeMessagesList.length) return;
     displayedMessageCount = Math.min(displayedMessageCount + MESSAGE_BATCH_SIZE, activeMessagesList.length);
     renderCurrentMessageBatch(true);
@@ -1799,6 +1806,9 @@ ${recMsgsStr}`;
   let isScrollLoading = false;
   if (chatFeedEl) {
     chatFeedEl.addEventListener('scroll', () => {
+      if (activePersonaId) {
+        activeMessagesList = LocalDB.getMessages(activePersonaId) || [];
+      }
       if (chatFeedEl.scrollTop <= 60 && displayedMessageCount < activeMessagesList.length) {
         if (!isScrollLoading) {
           isScrollLoading = true;
@@ -2116,6 +2126,10 @@ ${recMsgsStr}`;
       onConfirm: () => {
         bubble.remove();
         LocalDB.deleteMessage(activePersonaId, msgId);
+        if (activePersonaId) {
+          activeMessagesList = LocalDB.getMessages(activePersonaId) || [];
+          displayedMessageCount = Math.min(displayedMessageCount, activeMessagesList.length);
+        }
         renderContactList(LocalDB.getPersonas());
       }
     });
@@ -2156,6 +2170,10 @@ ${recMsgsStr}`;
     };
 
     LocalDB.addMessage(targetPersonaId, userMsg);
+    if (activePersonaId === targetPersonaId) {
+      activeMessagesList = LocalDB.getMessages(targetPersonaId) || [];
+      displayedMessageCount++;
+    }
     messageInput.value = '';
     messageInput.style.height = 'auto';
 
@@ -2250,6 +2268,10 @@ ${recMsgsStr}`;
         ...(customInstruction && customInstruction.trim() ? { retryInstruction: customInstruction.trim() } : {})
       };
       LocalDB.addMessage(personaId, finalAssistantMsg);
+      if (activePersonaId === personaId) {
+        activeMessagesList = LocalDB.getMessages(personaId) || [];
+        displayedMessageCount++;
+      }
 
       const allMsgs = LocalDB.getMessages(personaId);
       const updatedPersona = LocalDB.getPersona(personaId) || persona;
