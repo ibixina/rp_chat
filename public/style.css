@@ -999,6 +999,39 @@ body, html {
   border-bottom-color: var(--accent-green, #00a884) !important;
 }
 
+/* Floating Scroll to Bottom Button */
+.scroll-bottom-btn {
+  position: absolute;
+  bottom: 75px;
+  right: 20px;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background-color: var(--bg-surface-elevated, #202c33);
+  color: var(--accent-green, #00a884);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  z-index: 100;
+  transition: opacity 0.2s ease, transform 0.2s ease, background-color 0.2s ease;
+}
+
+.scroll-bottom-btn:hover {
+  background-color: var(--accent-green, #00a884);
+  color: #ffffff;
+  transform: scale(1.08);
+}
+
+.scroll-bottom-btn.hidden {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(10px);
+}
+
 /* Action Text Formatting (Light Slate Blue, No Asterisks) */
 .message-action {
   color: #7bb5e8;

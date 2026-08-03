@@ -1816,11 +1816,46 @@ ${recMsgsStr}`;
           setTimeout(() => { isScrollLoading = false; }, 300);
         }
       }
+      updateScrollBottomBtn();
     });
   }
 
+  const scrollBottomBtn = document.getElementById('btn-scroll-bottom');
+  if (scrollBottomBtn) {
+    scrollBottomBtn.addEventListener('click', () => {
+      scrollToBottom();
+    });
+  }
+
+  function isNearBottom(threshold = 120) {
+    if (!chatFeedEl) return true;
+    const distanceToBottom = chatFeedEl.scrollHeight - chatFeedEl.scrollTop - chatFeedEl.clientHeight;
+    return distanceToBottom <= threshold;
+  }
+
   function scrollToBottom() {
-    chatFeedEl.scrollTop = chatFeedEl.scrollHeight;
+    if (chatFeedEl) {
+      chatFeedEl.scrollTop = chatFeedEl.scrollHeight;
+    }
+    updateScrollBottomBtn();
+  }
+
+  function scrollToBottomIfNearBottom(threshold = 120) {
+    if (!chatFeedEl) return;
+    if (isNearBottom(threshold)) {
+      chatFeedEl.scrollTop = chatFeedEl.scrollHeight;
+    }
+    updateScrollBottomBtn();
+  }
+
+  function updateScrollBottomBtn() {
+    const btn = document.getElementById('btn-scroll-bottom');
+    if (!btn) return;
+    if (!isNearBottom(120)) {
+      btn.classList.remove('hidden');
+    } else {
+      btn.classList.add('hidden');
+    }
   }
 
   // -------------------------------------------------------------
@@ -2268,7 +2303,7 @@ ${recMsgsStr}`;
               textEl.innerHTML = formatMessageText(currentRaw);
             }
           }
-          scrollToBottom();
+          scrollToBottomIfNearBottom();
         }
       });
 
@@ -2309,7 +2344,7 @@ ${recMsgsStr}`;
           ...(customInstruction && customInstruction.trim() ? { retryInstruction: customInstruction.trim() } : {})
         };
         appendMessageBubble(errorMsgObj);
-        scrollToBottom();
+        scrollToBottomIfNearBottom();
       }
     } finally {
       generatingPersonas[personaId] = false;
@@ -2319,7 +2354,7 @@ ${recMsgsStr}`;
       }
       if (activePersonaId === personaId) {
         updateHeaderStatus(personaId);
-        scrollToBottom();
+        scrollToBottomIfNearBottom();
       }
       renderContactList(LocalDB.getPersonas());
     }
@@ -2370,7 +2405,7 @@ ${recMsgsStr}`;
             textEl.dataset.rawText = updatedRaw;
             textEl.innerHTML = formatMessageText(updatedRaw);
           }
-          scrollToBottom();
+          scrollToBottomIfNearBottom();
         }
       });
 
