@@ -12,15 +12,113 @@ document.addEventListener('DOMContentLoaded', () => {
   const MEMORY_AUTO_SYNC_INTERVAL = 12;
 
   // -------------------------------------------------------------
-  // Storage Adapter (Pure Client-Side Browser Storage)
+  // -------------------------------------------------------------
+  // Storage Adapter (Client-Side Storage with IndexedDB & LocalStorage Fallback)
   // -------------------------------------------------------------
   const LocalDB = {
     KEY: 'persona_db',
+    DB_NAME: 'PersonaChatDB',
+    STORE_NAME: 'kv_store',
+    _cache: null,
+    _dbPromise: null,
+
+    getDB() {
+      if (!this._dbPromise) {
+        this._dbPromise = new Promise((resolve) => {
+          if (typeof window === 'undefined' || !window.indexedDB) {
+            return resolve(null);
+          }
+          const request = indexedDB.open(this.DB_NAME, 1);
+          request.onupgradeneeded = (e) => {
+            const db = e.target.result;
+            if (!db.objectStoreNames.contains(this.STORE_NAME)) {
+              db.createObjectStore(this.STORE_NAME);
+            }
+          };
+          request.onsuccess = (e) => resolve(e.target.result);
+          request.onerror = (e) => {
+            console.warn('[STORAGE] IndexedDB open error:', e);
+            resolve(null);
+          };
+        });
+      }
+      return this._dbPromise;
+    },
+
+    async getIDB(key) {
+      try {
+        const db = await this.getDB();
+        if (!db) return null;
+        return new Promise((resolve) => {
+          const tx = db.transaction(this.STORE_NAME, 'readonly');
+          const store = tx.objectStore(this.STORE_NAME);
+          const req = store.get(key);
+          req.onsuccess = () => resolve(req.result || null);
+          req.onerror = () => resolve(null);
+        });
+      } catch (err) {
+        console.warn('[STORAGE] IndexedDB read error:', err);
+        return null;
+      }
+    },
+
+    async setIDB(key, val) {
+      try {
+        const db = await this.getDB();
+        if (!db) return false;
+        return new Promise((resolve) => {
+          const tx = db.transaction(this.STORE_NAME, 'readwrite');
+          const store = tx.objectStore(this.STORE_NAME);
+          const req = store.put(val, key);
+          req.onsuccess = () => resolve(true);
+          req.onerror = (err) => {
+            console.warn('[STORAGE] IndexedDB write error:', err);
+            resolve(false);
+          };
+        });
+      } catch (err) {
+        console.warn('[STORAGE] IndexedDB put error:', err);
+        return false;
+      }
+    },
+
+    async deleteIDB(key) {
+      try {
+        const db = await this.getDB();
+        if (!db) return false;
+        return new Promise((resolve) => {
+          const tx = db.transaction(this.STORE_NAME, 'readwrite');
+          const store = tx.objectStore(this.STORE_NAME);
+          const req = store.delete(key);
+          req.onsuccess = () => resolve(true);
+          req.onerror = () => resolve(false);
+        });
+      } catch (err) {
+        return false;
+      }
+    },
 
     async init() {
-      let dataStr = localStorage.getItem(this.KEY);
-      if (!dataStr) {
-        const defaultData = {
+      // 1. Try reading from IndexedDB
+      let data = await this.getIDB(this.KEY);
+
+      // 2. Fallback to LocalStorage and migrate existing data
+      if (!data) {
+        try {
+          const dataStr = localStorage.getItem(this.KEY);
+          if (dataStr) {
+            data = JSON.parse(dataStr);
+            await this.setIDB(this.KEY, data);
+            logEvent('STORAGE', 'Migrated persona_db from LocalStorage to IndexedDB.');
+          }
+        } catch (e) {
+          console.warn('[STORAGE] LocalStorage read error:', e);
+        }
+      }
+
+      // 3. Initialize default data if empty
+      if (!data) {
+        data = {
           personas: [
             {
               id: 'default-elena',
@@ -44,28 +142,37 @@ document.addEventListener('DOMContentLoaded', () => {
           },
           settings: {}
         };
-        localStorage.setItem(this.KEY, JSON.stringify(defaultData));
-        return defaultData;
+        await this.setIDB(this.KEY, data);
+        try {
+          localStorage.setItem(this.KEY, JSON.stringify(data));
+        } catch (e) {}
       }
-      return JSON.parse(dataStr);
+
+      this._cache = data;
+      return this._cache;
     },
 
     getRaw() {
-      try {
-        const data = JSON.parse(localStorage.getItem(this.KEY)) || { personas: [], messages: {}, settings: {} };
-        if (!data.migratedMarkdownV3) {
-          if (data.messages) {
-            for (const personaId in data.messages) {
-              data.messages[personaId].forEach(msg => {
+      if (this._cache) {
+        if (!this._cache.migratedMarkdownV3) {
+          if (this._cache.messages) {
+            for (const personaId in this._cache.messages) {
+              this._cache.messages[personaId].forEach(msg => {
                 if (msg.text) {
                   msg.text = this.sanitizeText(msg.text);
                 }
               });
             }
           }
-          data.migratedMarkdownV3 = true;
-          localStorage.setItem(this.KEY, JSON.stringify(data));
+          this._cache.migratedMarkdownV3 = true;
+          this.saveRaw(this._cache);
         }
+        return this._cache;
+      }
+
+      try {
+        const data = JSON.parse(localStorage.getItem(this.KEY)) || { personas: [], messages: {}, settings: {} };
+        this._cache = data;
         return data;
       } catch (e) {
         return { personas: [], messages: {}, settings: {} };
@@ -73,7 +180,24 @@ document.addEventListener('DOMContentLoaded', () => {
     },
 
     saveRaw(data) {
-      localStorage.setItem(this.KEY, JSON.stringify(data));
+      this._cache = data;
+      // Persist asynchronously to IndexedDB (virtually unlimited quota)
+      this.setIDB(this.KEY, data);
+
+      // Best-effort write to localStorage, catching quota error cleanly
+      try {
+        localStorage.setItem(this.KEY, JSON.stringify(data));
+      } catch (e) {
+        // Quota exceeded in LocalStorage is expected for large histories; IndexedDB holds full data safely.
+      }
+    },
+
+    async clearAll() {
+      this._cache = null;
+      await this.deleteIDB(this.KEY);
+      try {
+        localStorage.clear();
+      } catch (e) {}
     },
 
     getSettings() {
@@ -1051,7 +1175,7 @@ ${recMsgsStr}`;
         confirmText: 'Reset All Data',
         danger: true,
         onConfirm: async () => {
-          localStorage.clear();
+          await LocalDB.clearAll();
           await LocalDB.init();
           hideModal(importModal);
           personas = LocalDB.getPersonas();
