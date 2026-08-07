@@ -626,26 +626,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
       let contentStr = '';
       if (file.truncated || !file.content) {
-        // Strategy A: Fetch directly via GitHub API raw media endpoint (CORS-compliant with Authorization header)
-        try {
-          const rawApiRes = await fetch(`https://api.github.com/gists/${gistId}/raw`, {
-            headers: token ? { 'Authorization': `Bearer ${token}` } : {}
-          });
-          if (rawApiRes.ok) {
-            contentStr = await rawApiRes.text();
-          }
-        } catch (e) {
-          console.warn('[SYNC] Gist API raw endpoint fetch failed, trying direct raw_url:', e);
+        // Fetch directly from file.raw_url without custom headers (CORS safe)
+        const rawRes = await fetch(file.raw_url);
+        if (!rawRes.ok) {
+          throw new Error(`Failed to fetch raw Gist content (HTTP ${rawRes.status}).`);
         }
-
-        // Strategy B: Fallback to file.raw_url WITHOUT custom headers (prevents CORS preflight net::ERR_FAILED)
-        if (!contentStr && file.raw_url) {
-          const rawRes = await fetch(file.raw_url);
-          if (!rawRes.ok) {
-            throw new Error(`Failed to fetch raw Gist content (HTTP ${rawRes.status}).`);
-          }
-          contentStr = await rawRes.text();
-        }
+        contentStr = await rawRes.text();
       } else {
         contentStr = file.content;
       }
