@@ -116,9 +116,13 @@ body, html {
   justify-content: center;
 }
 
+.app-container.sidebar-collapsed #btn-expand-sidebar {
+  display: inline-flex !important;
+}
+
 #btn-expand-sidebar,
 .empty-sidebar-toggle {
-  display: none !important;
+  display: none;
 }
 
 .sidebar-header {
@@ -1465,6 +1469,15 @@ html, body {
   .chat-header-actions .icon-btn {
     padding: 5px;
     font-size: 15px;
+  }
+
+  #btn-expand-sidebar,
+  .empty-sidebar-toggle {
+    display: inline-flex !important;
+    font-size: 18px !important;
+    padding: 6px !important;
+    color: var(--text-main) !important;
+    cursor: pointer !important;
   }
 
   .modal-card {
