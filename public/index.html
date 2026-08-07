@@ -2,8 +2,15 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>Messages</title>
+  <!-- Mobile & PWA Fullscreen Meta Tags -->
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Persona Chat">
+  <meta name="theme-color" content="#0b141a">
+  <link rel="manifest" href="manifest.json">
   <!-- Google Fonts: Inter & Roboto -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -89,6 +96,9 @@
             </div>
           </div>
           <div class="chat-header-actions">
+            <button id="btn-toggle-fullscreen" class="icon-btn" title="Toggle Fullscreen Mode">
+              <i class="fa-solid fa-expand"></i>
+            </button>
             <button id="btn-export-chat" class="icon-btn" title="Export Chat JSON">
               <i class="fa-solid fa-file-export"></i>
             </button>

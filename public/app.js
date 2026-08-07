@@ -1562,8 +1562,37 @@ ${recMsgsStr}`;
   const btnDeletePersonaHeader = document.getElementById('btn-delete-persona-header');
   const btnViewMemory = document.getElementById('btn-view-memory');
   const btnClearChat = document.getElementById('btn-clear-chat');
-  const btnExportChat = document.getElementById('btn-export-chat');
-  const btnUserProfile = document.getElementById('btn-user-profile');
+  const btnToggleFullscreen = document.getElementById('btn-toggle-fullscreen');
+  if (btnToggleFullscreen) {
+    btnToggleFullscreen.addEventListener('click', () => {
+      const icon = btnToggleFullscreen.querySelector('i');
+      if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+        const docEl = document.documentElement;
+        const requestFS = docEl.requestFullscreen || docEl.webkitRequestFullscreen || docEl.mozRequestFullScreen || docEl.msRequestFullscreen;
+        if (requestFS) {
+          requestFS.call(docEl).then(() => {
+            if (icon) icon.className = 'fa-solid fa-compress';
+          }).catch(() => {
+            showToast('Fullscreen mode blocked or unsupported by browser.', 'info');
+          });
+        }
+      } else {
+        const exitFS = document.exitFullscreen || document.webkitExitFullscreen || document.mozCancelFullScreen || document.msExitFullscreen;
+        if (exitFS) {
+          exitFS.call(document).then(() => {
+            if (icon) icon.className = 'fa-solid fa-expand';
+          }).catch(() => {});
+        }
+      }
+    });
+
+    document.addEventListener('fullscreenchange', () => {
+      const icon = btnToggleFullscreen.querySelector('i');
+      if (icon) {
+        icon.className = document.fullscreenElement ? 'fa-solid fa-compress' : 'fa-solid fa-expand';
+      }
+    });
+  }
 
   // Single Chat Export JSON
   function exportChatJson(personaId) {

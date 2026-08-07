@@ -1,0 +1,22 @@
+{
+  "name": "Persona Chat",
+  "short_name": "PersonaChat",
+  "description": "Multi-Device E2EE Persona Roleplay Chat",
+  "start_url": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0b141a",
+  "theme_color": "#0b141a",
+  "icons": [
+    {
+      "src": "./uploads/default-avatar.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml"
+    },
+    {
+      "src": "./uploads/default-avatar.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml"
+    }
+  ]
+}
