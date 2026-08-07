@@ -611,21 +611,32 @@ document.addEventListener('DOMContentLoaded', () => {
     },
 
     async pullFromGist(token, gistId) {
-      const res = await fetch(`https://api.github.com/gists/${gistId}`, {
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Accept': 'application/vnd.github.v3+json'
-        }
-      });
+      const headers = { 'Accept': 'application/vnd.github.v3+json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+
+      const res = await fetch(`https://api.github.com/gists/${gistId}`, { headers });
       if (!res.ok) {
         throw new Error(`GitHub Gist Pull Error (${res.status}). Verify Gist ID and PAT token.`);
       }
       const data = await res.json();
       const file = data.files['persona_sync_vault.enc'];
-      if (!file || !file.content) {
+      if (!file) {
         throw new Error("Gist found but does not contain persona_sync_vault.enc file.");
       }
-      return JSON.parse(file.content);
+
+      let contentStr = '';
+      if (file.truncated || !file.content) {
+        const rawHeaders = token ? { 'Authorization': `Bearer ${token}` } : {};
+        const rawRes = await fetch(file.raw_url, { headers: rawHeaders });
+        if (!rawRes.ok) {
+          throw new Error(`Failed to fetch raw Gist content (HTTP ${rawRes.status}).`);
+        }
+        contentStr = await rawRes.text();
+      } else {
+        contentStr = file.content;
+      }
+
+      return JSON.parse(contentStr);
     },
 
     async compressText(text) {
