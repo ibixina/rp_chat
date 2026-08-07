@@ -2285,19 +2285,103 @@ ${recMsgsStr}`;
     deepinfra: 'NousResearch/Hermes-3-Llama-3.1-70B'
   };
 
+  function getSavedCustomModels() {
+    const settings = LocalDB.getSettings();
+    return Array.isArray(settings.customModels) ? settings.customModels : [];
+  }
+
+  function saveCustomModel(modelStr) {
+    const val = (modelStr || '').trim();
+    if (!val || val === 'custom') return;
+
+    let customModels = getSavedCustomModels();
+    if (!customModels.includes(val)) {
+      customModels.push(val);
+      LocalDB.saveSettings({ customModels });
+    }
+    renderCustomModelsInSelects();
+  }
+
+  function removeCustomModel(modelStr) {
+    let customModels = getSavedCustomModels().filter(m => m !== modelStr);
+    LocalDB.saveSettings({ customModels });
+    renderCustomModelsInSelects();
+    loadSettingsIntoUI();
+    showToast(`Removed custom model '${modelStr}'`);
+  }
+
+  function renderCustomModelsInSelects() {
+    const customModels = getSavedCustomModels();
+    const selects = [
+      document.getElementById('settings-model-preset'),
+      document.getElementById('settings-memory-model-preset')
+    ];
+
+    selects.forEach(select => {
+      if (!select) return;
+
+      Array.from(select.querySelectorAll('.user-custom-model-option')).forEach(opt => opt.remove());
+      const customPlaceholder = select.querySelector('option[value="custom"]');
+
+      customModels.forEach(m => {
+        const opt = document.createElement('option');
+        opt.value = m;
+        opt.textContent = `Custom: ${m}`;
+        opt.className = 'user-custom-model-option';
+        if (customPlaceholder) {
+          select.insertBefore(opt, customPlaceholder);
+        } else {
+          select.appendChild(opt);
+        }
+      });
+    });
+
+    renderSavedCustomModelsTags();
+  }
+
+  function renderSavedCustomModelsTags() {
+    const customModels = getSavedCustomModels();
+    const containers = [
+      document.getElementById('saved-custom-models-container'),
+      document.getElementById('saved-mem-custom-models-container')
+    ];
+
+    containers.forEach(container => {
+      if (!container) return;
+      container.innerHTML = '';
+      if (customModels.length === 0) return;
+
+      customModels.forEach(m => {
+        const tag = document.createElement('span');
+        tag.className = 'badge';
+        tag.style.cssText = 'background: var(--bg-input, #2a3942); color: var(--text-main, #e9edef); border: 1px solid var(--border-color, #222d34); font-size: 11.5px; padding: 4px 8px; border-radius: 12px; display: inline-flex; align-items: center; gap: 6px; margin-right: 4px; margin-bottom: 4px;';
+        tag.innerHTML = `<span>${m}</span><i class="fa-solid fa-xmark btn-delete-custom-tag" data-model="${m}" style="cursor: pointer; color: #ea4335; font-size: 12px;" title="Remove model"></i>`;
+
+        tag.querySelector('.btn-delete-custom-tag')?.addEventListener('click', (e) => {
+          e.stopPropagation();
+          removeCustomModel(m);
+        });
+
+        container.appendChild(tag);
+      });
+    });
+  }
+
   function setModelUI(modelVal) {
+    renderCustomModelsInSelects();
     const modelPreset = document.getElementById('settings-model-preset');
     const modelCustom = document.getElementById('settings-model-custom');
+    const customGroup = document.getElementById('custom-model-input-group');
     if (!modelPreset) return;
 
     const hasOpt = Array.from(modelPreset.options).some(o => o.value === modelVal);
     if (hasOpt) {
       modelPreset.value = modelVal;
-      modelCustom?.classList.add('hidden');
+      customGroup?.classList.add('hidden');
       if (modelCustom) modelCustom.value = '';
     } else {
       modelPreset.value = 'custom';
-      modelCustom?.classList.remove('hidden');
+      customGroup?.classList.remove('hidden');
       if (modelCustom) modelCustom.value = modelVal || '';
     }
   }
@@ -2311,18 +2395,20 @@ ${recMsgsStr}`;
   }
 
   function setMemModelUI(modelVal) {
+    renderCustomModelsInSelects();
     const memModelPreset = document.getElementById('settings-memory-model-preset');
     const memModelCustom = document.getElementById('settings-memory-model-custom');
+    const memCustomGroup = document.getElementById('mem-custom-model-input-group');
     if (!memModelPreset) return;
 
     const hasOpt = Array.from(memModelPreset.options).some(o => o.value === modelVal);
     if (hasOpt) {
       memModelPreset.value = modelVal;
-      memModelCustom?.classList.add('hidden');
+      memCustomGroup?.classList.add('hidden');
       if (memModelCustom) memModelCustom.value = '';
     } else {
       memModelPreset.value = 'custom';
-      memModelCustom?.classList.remove('hidden');
+      memCustomGroup?.classList.remove('hidden');
       if (memModelCustom) memModelCustom.value = modelVal || '';
     }
   }
@@ -2336,6 +2422,7 @@ ${recMsgsStr}`;
   }
 
   function loadSettingsIntoUI() {
+    renderCustomModelsInSelects();
     const settings = LocalDB.getSettings();
 
     const openrouterKeyInput = document.getElementById('settings-openrouter-key');
@@ -2483,6 +2570,7 @@ ${recMsgsStr}`;
 
   const modelPresetEl = document.getElementById('settings-model-preset');
   const modelCustomEl = document.getElementById('settings-model-custom');
+  const btnAddCustomModel = document.getElementById('btn-add-custom-model');
 
   function updateCurrentProviderModelTracking() {
     const activeProv = cardDeepInfra?.classList.contains('active') ? 'deepinfra' : 'openrouter';
@@ -2491,10 +2579,11 @@ ${recMsgsStr}`;
 
   if (modelPresetEl) {
     modelPresetEl.addEventListener('change', (e) => {
+      const customGroup = document.getElementById('custom-model-input-group');
       if (e.target.value === 'custom') {
-        modelCustomEl?.classList.remove('hidden');
+        customGroup?.classList.remove('hidden');
       } else {
-        modelCustomEl?.classList.add('hidden');
+        customGroup?.classList.add('hidden');
       }
       updateCurrentProviderModelTracking();
     });
@@ -2506,8 +2595,20 @@ ${recMsgsStr}`;
     });
   }
 
+  if (btnAddCustomModel) {
+    btnAddCustomModel.addEventListener('click', () => {
+      const val = modelCustomEl?.value.trim();
+      if (val) {
+        saveCustomModel(val);
+        setModelUI(val);
+        showToast(`Saved custom model '${val}'`);
+      }
+    });
+  }
+
   const memModelPresetEl = document.getElementById('settings-memory-model-preset');
   const memModelCustomEl = document.getElementById('settings-memory-model-custom');
+  const btnAddMemCustomModel = document.getElementById('btn-add-mem-custom-model');
 
   function updateCurrentMemProviderModelTracking() {
     const activeMemProv = cardMemDeepInfra?.classList.contains('active') ? 'deepinfra' : (cardMemOpenRouter?.classList.contains('active') ? 'openrouter' : 'inherit');
@@ -2518,10 +2619,11 @@ ${recMsgsStr}`;
 
   if (memModelPresetEl) {
     memModelPresetEl.addEventListener('change', (e) => {
+      const memCustomGroup = document.getElementById('mem-custom-model-input-group');
       if (e.target.value === 'custom') {
-        memModelCustomEl?.classList.remove('hidden');
+        memCustomGroup?.classList.remove('hidden');
       } else {
-        memModelCustomEl?.classList.add('hidden');
+        memCustomGroup?.classList.add('hidden');
       }
       updateCurrentMemProviderModelTracking();
     });
@@ -2530,6 +2632,17 @@ ${recMsgsStr}`;
   if (memModelCustomEl) {
     memModelCustomEl.addEventListener('input', () => {
       updateCurrentMemProviderModelTracking();
+    });
+  }
+
+  if (btnAddMemCustomModel) {
+    btnAddMemCustomModel.addEventListener('click', () => {
+      const val = memModelCustomEl?.value.trim();
+      if (val) {
+        saveCustomModel(val);
+        setMemModelUI(val);
+        showToast(`Saved custom memory model '${val}'`);
+      }
     });
   }
 
@@ -2623,6 +2736,9 @@ ${recMsgsStr}`;
       const lastMemDeepInfraModel = settingsMemProviderModels['deepinfra'];
       const memoryBudget = parseInt(memBudgetNumInput?.value || document.getElementById('settings-memory-budget')?.value || 5000, 10);
 
+      if (model) saveCustomModel(model);
+      if (memoryModel && memoryProvider !== 'inherit') saveCustomModel(memoryModel);
+
       LocalDB.saveSettings({
         openrouterKey,
         deepinfraKey,
@@ -2644,6 +2760,7 @@ ${recMsgsStr}`;
         memoryBudget
       });
 
+      showToast('Settings saved successfully!');
       hideModal(settingsModal);
     });
   }

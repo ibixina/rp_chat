@@ -325,16 +325,24 @@
 
         <div class="form-group">
           <label for="settings-model-preset">Model Engine Selection</label>
-          <select id="settings-model-preset" class="form-control" style="margin-bottom: 8px;">
+          <select id="settings-model-preset" class="form-control" style="margin-bottom: 4px;">
             <option value="nvidia/nemotron-3-ultra-550b-a55b:free">OpenRouter: nvidia/nemotron-3-ultra-550b-a55b:free (Free 550B)</option>
             <option value="sao10k/l3.3-euryale-70b">OpenRouter: sao10k/l3.3-euryale-70b (Unrestricted RP)</option>
             <option value="meta-llama/llama-3.3-70b-instruct">OpenRouter: meta-llama/llama-3.3-70b-instruct (Fast 70B)</option>
             <option value="gryphe/mythomax-l2-13b">OpenRouter: gryphe/mythomax-l2-13b (Classic RP)</option>
             <option value="NousResearch/Hermes-3-Llama-3.1-70B">DeepInfra: NousResearch/Hermes-3-Llama-3.1-70B</option>
             <option value="meta-llama/Llama-3.3-70B-Instruct">DeepInfra: meta-llama/Llama-3.3-70B-Instruct</option>
-            <option value="custom">Custom Model Identifier...</option>
+            <option value="custom">+ Custom Model Identifier...</option>
           </select>
-          <input type="text" id="settings-model-custom" placeholder="Enter custom model string (e.g. sao10k/l3.3-euryale-70b)" class="hidden" style="margin-top: 4px;" />
+
+          <div id="custom-model-input-group" class="hidden" style="display: flex; gap: 6px; margin-top: 6px;">
+            <input type="text" id="settings-model-custom" placeholder="Enter custom model string (e.g. sao10k/l3.3-euryale-70b)" class="form-control" style="font-size: 12px; flex: 1;" />
+            <button type="button" class="btn btn-secondary" id="btn-add-custom-model" style="font-size: 12px; padding: 6px 12px; white-space: nowrap; color: var(--accent-green);">
+              <i class="fa-solid fa-plus"></i> Save Model
+            </button>
+          </div>
+
+          <div id="saved-custom-models-container" style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px;"></div>
         </div>
 
         <div class="form-group">
@@ -410,9 +418,17 @@
               <option value="meta-llama/llama-3.3-70b-instruct">meta-llama/llama-3.3-70b-instruct</option>
               <option value="gryphe/mythomax-l2-13b">gryphe/mythomax-l2-13b</option>
               <option value="NousResearch/Hermes-3-Llama-3.1-70B">NousResearch/Hermes-3-Llama-3.1-70B</option>
-              <option value="custom">Custom Model Identifier...</option>
+              <option value="custom">+ Custom Model Identifier...</option>
             </select>
-            <input type="text" id="settings-memory-model-custom" placeholder="Enter custom model string (e.g. nvidia/nemotron-3-ultra-550b-a55b:free)" class="hidden" style="margin-top: 4px;" />
+
+            <div id="mem-custom-model-input-group" class="hidden" style="display: flex; gap: 6px; margin-top: 6px;">
+              <input type="text" id="settings-memory-model-custom" placeholder="Enter custom model string (e.g. nvidia/nemotron-3-ultra-550b-a55b:free)" class="form-control" style="font-size: 12px; flex: 1;" />
+              <button type="button" class="btn btn-secondary" id="btn-add-mem-custom-model" style="font-size: 12px; padding: 6px 12px; white-space: nowrap; color: var(--accent-green);">
+                <i class="fa-solid fa-plus"></i> Save Model
+              </button>
+            </div>
+
+            <div id="saved-mem-custom-models-container" style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px;"></div>
           </div>
 
           <div class="form-group" style="margin-top: 10px;">
