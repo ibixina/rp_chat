@@ -534,7 +534,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // -------------------------------------------------------------
   // Multi-Device End-to-End Encrypted Sync Engine (Option 2)
-  // Support Gzip Compression & Auto-Chunking for Multi-MB Payloads
+  // Supports GitHub Gist API (Rate-Limit Free 100MB) & Relay Fallback
   // -------------------------------------------------------------
   const SyncEngine = {
     DEFAULT_RELAY: 'https://jsonblob.com/api/jsonBlob',
@@ -546,7 +546,9 @@ document.addEventListener('DOMContentLoaded', () => {
         syncId: settings.syncId || localStorage.getItem('persona_sync_id') || '',
         syncKey: settings.syncKey || localStorage.getItem('persona_sync_key') || '',
         lastPushedAt: settings.lastPushedAt || localStorage.getItem('persona_sync_last_pushed') || null,
-        lastPulledAt: settings.lastPulledAt || localStorage.getItem('persona_sync_last_pulled') || null
+        lastPulledAt: settings.lastPulledAt || localStorage.getItem('persona_sync_last_pulled') || null,
+        githubToken: settings.syncGithubToken || localStorage.getItem('persona_sync_github_token') || '',
+        gistId: settings.syncGistId || localStorage.getItem('persona_sync_gist_id') || ''
       };
     },
 
@@ -555,8 +557,75 @@ document.addEventListener('DOMContentLoaded', () => {
       if (updates.syncKey !== undefined) localStorage.setItem('persona_sync_key', updates.syncKey);
       if (updates.lastPushedAt !== undefined) localStorage.setItem('persona_sync_last_pushed', updates.lastPushedAt);
       if (updates.lastPulledAt !== undefined) localStorage.setItem('persona_sync_last_pulled', updates.lastPulledAt);
+      if (updates.githubToken !== undefined) localStorage.setItem('persona_sync_github_token', updates.githubToken);
+      if (updates.gistId !== undefined) localStorage.setItem('persona_sync_gist_id', updates.gistId);
 
       LocalDB.saveSettings(updates);
+    },
+
+    async pushToGist(encryptedObj, token, gistId = '') {
+      const payload = {
+        description: "Persona Chat App E2EE Vault",
+        public: false,
+        files: {
+          "persona_sync_vault.enc": {
+            content: JSON.stringify(encryptedObj)
+          }
+        }
+      };
+
+      if (gistId) {
+        const res = await fetch(`https://api.github.com/gists/${gistId}`, {
+          method: 'PATCH',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+            'Accept': 'application/vnd.github.v3+json'
+          },
+          body: JSON.stringify(payload)
+        });
+        if (res.status === 404) {
+          return await this.pushToGist(encryptedObj, token, '');
+        }
+        if (!res.ok) {
+          const errText = await res.text();
+          throw new Error(`GitHub Gist Error (${res.status}): ${errText}`);
+        }
+        return await res.json();
+      } else {
+        const res = await fetch('https://api.github.com/gists', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json',
+            'Accept': 'application/vnd.github.v3+json'
+          },
+          body: JSON.stringify(payload)
+        });
+        if (!res.ok) {
+          const errText = await res.text();
+          throw new Error(`GitHub Gist Error (${res.status}): ${errText}`);
+        }
+        return await res.json();
+      }
+    },
+
+    async pullFromGist(token, gistId) {
+      const res = await fetch(`https://api.github.com/gists/${gistId}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Accept': 'application/vnd.github.v3+json'
+        }
+      });
+      if (!res.ok) {
+        throw new Error(`GitHub Gist Pull Error (${res.status}). Verify Gist ID and PAT token.`);
+      }
+      const data = await res.json();
+      const file = data.files['persona_sync_vault.enc'];
+      if (!file || !file.content) {
+        throw new Error("Gist found but does not contain persona_sync_vault.enc file.");
+      }
+      return JSON.parse(file.content);
     },
 
     async compressText(text) {
@@ -628,7 +697,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
     getSyncUrl(syncId, syncKey) {
       const base = window.location.origin + window.location.pathname;
-      return `${base}#sync?id=${encodeURIComponent(syncId)}&key=${encodeURIComponent(syncKey)}`;
+      const { githubToken, gistId } = this.getSyncSettings();
+      let url = `${base}#sync?id=${encodeURIComponent(syncId)}&key=${encodeURIComponent(syncKey)}`;
+      if (githubToken && gistId) {
+        url += `&gist=${encodeURIComponent(gistId)}&token=${encodeURIComponent(githubToken)}`;
+      }
+      return url;
     },
 
     parseSyncUrl(urlOrToken) {
@@ -639,7 +713,9 @@ document.addEventListener('DOMContentLoaded', () => {
           const params = new URLSearchParams(hashPart);
           const syncId = params.get('id');
           const syncKey = params.get('key');
-          if (syncId && syncKey) return { syncId, syncKey };
+          const gistId = params.get('gist') || '';
+          const githubToken = params.get('token') || '';
+          if (syncId && syncKey) return { syncId, syncKey, gistId, githubToken };
         }
 
         if (str.startsWith('{')) {
@@ -651,7 +727,9 @@ document.addEventListener('DOMContentLoaded', () => {
           const params = new URLSearchParams(str.startsWith('http') ? str.split('?')[1] : str);
           const syncId = params.get('id');
           const syncKey = params.get('key');
-          if (syncId && syncKey) return { syncId, syncKey };
+          const gistId = params.get('gist') || '';
+          const githubToken = params.get('token') || '';
+          if (syncId && syncKey) return { syncId, syncKey, gistId, githubToken };
         }
       } catch (e) {}
       return null;
@@ -732,8 +810,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       if (res.status === 429 || res.status === 413) {
-        const text = await res.text();
-        throw new Error(`Cloud relay limit: ${text || 'Size/Rate limit exceeded (HTTP ' + res.status + ')'}`);
+        throw new Error(`Cloud relay rate limit hit (HTTP ${res.status}). Tip: Add a GitHub PAT token in Vault API Settings for high-speed rate-limit free sync.`);
       }
 
       if (!res.ok) {
@@ -746,7 +823,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const url = `${this.DEFAULT_RELAY}/${blobId}`;
       const res = await fetch(url);
       if (res.status === 429) {
-        throw new Error("Cloud relay rate limit reached (HTTP 429). Please wait a moment before trying again.");
+        throw new Error("Cloud relay rate limit reached (HTTP 429). Please wait a moment or connect GitHub Gist API in Vault Settings.");
       }
       if (!res.ok) {
         throw new Error(`Cloud vault not found (HTTP ${res.status}).`);
@@ -755,7 +832,7 @@ document.addEventListener('DOMContentLoaded', () => {
     },
 
     async pushToCloud() {
-      let { syncId, syncKey } = this.getSyncSettings();
+      let { syncId, syncKey, githubToken, gistId } = this.getSyncSettings();
       if (!syncId || !syncKey) {
         const newSession = await this.generateNewSession();
         syncId = newSession.syncId;
@@ -764,9 +841,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const rawDB = LocalDB.getRaw();
       const encryptedObj = await this.encryptPayload(rawDB, syncKey);
-      const serializedObj = JSON.stringify(encryptedObj);
 
-      // If payload is larger than SAFE_CHUNK_SIZE, automatically split into chunks!
+      // 1. If GitHub Gist API is configured (High-Speed & Rate-Limit Free!)
+      if (githubToken) {
+        const gistData = await this.pushToGist(encryptedObj, githubToken, gistId);
+        if (gistData && gistData.id && gistData.id !== gistId) {
+          this.saveSyncSettings({ syncGistId: gistData.id });
+        }
+        const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        this.saveSyncSettings({ lastPushedAt: now });
+        return { success: true, timestamp: now, provider: 'GitHub Gist' };
+      }
+
+      // 2. Default Zero-Config Relay (with throttled chunking)
+      const serializedObj = JSON.stringify(encryptedObj);
       if (serializedObj.length > this.SAFE_CHUNK_SIZE) {
         const chunks = [];
         for (let i = 0; i < serializedObj.length; i += this.SAFE_CHUNK_SIZE) {
@@ -775,6 +863,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
         const chunkBlobIds = [];
         for (let i = 0; i < chunks.length; i++) {
+          if (i > 0) await new Promise(r => setTimeout(r, 150)); // Throttling delay to prevent burst 429 rate limit
           const chunkId = await this.uploadSingleBlob(`${syncId}_c${i}`, {
             v: 2,
             type: 'chunk',
@@ -784,7 +873,7 @@ document.addEventListener('DOMContentLoaded', () => {
           chunkBlobIds.push(chunkId);
         }
 
-        // Upload index blob
+        await new Promise(r => setTimeout(r, 150));
         await this.uploadSingleBlob(syncId, {
           v: 2,
           type: 'chunk_index',
@@ -793,34 +882,43 @@ document.addEventListener('DOMContentLoaded', () => {
           updatedAt: new Date().toISOString()
         });
       } else {
-        // Fits in single blob
         await this.uploadSingleBlob(syncId, encryptedObj);
       }
 
       const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       this.saveSyncSettings({ lastPushedAt: now });
-      return { success: true, timestamp: now };
+      return { success: true, timestamp: now, provider: 'Relay' };
     },
 
     async pullFromCloud() {
-      const { syncId, syncKey } = this.getSyncSettings();
+      const { syncId, syncKey, githubToken, gistId } = this.getSyncSettings();
       if (!syncId || !syncKey) {
         throw new Error("No active sync pairing found. Generate or scan a QR code first.");
       }
 
-      const remoteData = await this.fetchSingleBlob(syncId);
-
       let encryptedObj = null;
 
-      // Handle Chunked Storage
-      if (remoteData && remoteData.type === 'chunk_index' && Array.isArray(remoteData.chunkIds)) {
-        const chunkPromises = remoteData.chunkIds.map(id => this.fetchSingleBlob(id));
-        const chunkResults = await Promise.all(chunkPromises);
-        chunkResults.sort((a, b) => (a.index || 0) - (b.index || 0));
-        const fullSerializedStr = chunkResults.map(c => c.data).join('');
-        encryptedObj = JSON.parse(fullSerializedStr);
-      } else {
-        encryptedObj = remoteData;
+      // 1. If GitHub Gist API is configured
+      if (githubToken && gistId) {
+        encryptedObj = await this.pullFromGist(githubToken, gistId);
+      }
+
+      // 2. Fallback Relay
+      if (!encryptedObj) {
+        const remoteData = await this.fetchSingleBlob(syncId);
+        if (remoteData && remoteData.type === 'chunk_index' && Array.isArray(remoteData.chunkIds)) {
+          const chunkResults = [];
+          for (let i = 0; i < remoteData.chunkIds.length; i++) {
+            if (i > 0) await new Promise(r => setTimeout(r, 100));
+            const cData = await this.fetchSingleBlob(remoteData.chunkIds[i]);
+            chunkResults.push(cData);
+          }
+          chunkResults.sort((a, b) => (a.index || 0) - (b.index || 0));
+          const fullSerializedStr = chunkResults.map(c => c.data).join('');
+          encryptedObj = JSON.parse(fullSerializedStr);
+        } else {
+          encryptedObj = remoteData;
+        }
       }
 
       const decryptedData = await this.decryptPayload(encryptedObj, syncKey);
@@ -834,18 +932,27 @@ document.addEventListener('DOMContentLoaded', () => {
 
     async smartSync() {
       let remoteDB = null;
-      const { syncId, syncKey } = this.getSyncSettings();
+      const { syncId, syncKey, githubToken, gistId } = this.getSyncSettings();
 
       if (syncId && syncKey) {
         try {
-          const remoteData = await this.fetchSingleBlob(syncId);
           let encryptedObj = null;
-          if (remoteData && remoteData.type === 'chunk_index' && Array.isArray(remoteData.chunkIds)) {
-            const chunkResults = await Promise.all(remoteData.chunkIds.map(id => this.fetchSingleBlob(id)));
-            chunkResults.sort((a, b) => (a.index || 0) - (b.index || 0));
-            encryptedObj = JSON.parse(chunkResults.map(c => c.data).join(''));
+          if (githubToken && gistId) {
+            encryptedObj = await this.pullFromGist(githubToken, gistId);
           } else {
-            encryptedObj = remoteData;
+            const remoteData = await this.fetchSingleBlob(syncId);
+            if (remoteData && remoteData.type === 'chunk_index' && Array.isArray(remoteData.chunkIds)) {
+              const chunkResults = [];
+              for (let i = 0; i < remoteData.chunkIds.length; i++) {
+                if (i > 0) await new Promise(r => setTimeout(r, 100));
+                const cData = await this.fetchSingleBlob(remoteData.chunkIds[i]);
+                chunkResults.push(cData);
+              }
+              chunkResults.sort((a, b) => (a.index || 0) - (b.index || 0));
+              encryptedObj = JSON.parse(chunkResults.map(c => c.data).join(''));
+            } else {
+              encryptedObj = remoteData;
+            }
           }
           remoteDB = await this.decryptPayload(encryptedObj, syncKey);
         } catch (e) {
@@ -1793,9 +1900,27 @@ ${recMsgsStr}`;
     updateSyncStatusUI();
   }
 
+  const syncGithubTokenInput = document.getElementById('sync-github-token-input');
+  const syncGistIdInput = document.getElementById('sync-gist-id-input');
+  const btnSaveGistSettings = document.getElementById('btn-save-gist-settings');
+
   function openSyncModal() {
+    const { githubToken, gistId } = SyncEngine.getSyncSettings();
+    if (syncGithubTokenInput) syncGithubTokenInput.value = githubToken || '';
+    if (syncGistIdInput) syncGistIdInput.value = gistId || '';
+
     updateSyncStatusUI();
     showModal(syncModal);
+  }
+
+  if (btnSaveGistSettings) {
+    btnSaveGistSettings.addEventListener('click', () => {
+      const token = syncGithubTokenInput?.value.trim() || '';
+      const gistId = syncGistIdInput?.value.trim() || '';
+      SyncEngine.saveSyncSettings({ syncGithubToken: token, syncGistId: gistId });
+      showToast('GitHub Gist Vault settings saved! High-speed rate-limit free sync enabled.');
+      updateSyncStatusUI();
+    });
   }
 
   if (btnSyncHeader) btnSyncHeader.addEventListener('click', openSyncModal);
