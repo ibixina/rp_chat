@@ -1562,6 +1562,8 @@ ${recMsgsStr}`;
   const btnDeletePersonaHeader = document.getElementById('btn-delete-persona-header');
   const btnViewMemory = document.getElementById('btn-view-memory');
   const btnClearChat = document.getElementById('btn-clear-chat');
+  const btnExportChat = document.getElementById('btn-export-chat');
+  const btnUserProfile = document.getElementById('btn-user-profile');
   const btnToggleFullscreen = document.getElementById('btn-toggle-fullscreen');
   if (btnToggleFullscreen) {
     btnToggleFullscreen.addEventListener('click', () => {
