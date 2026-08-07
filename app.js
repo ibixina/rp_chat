@@ -1837,22 +1837,28 @@ ${recMsgsStr}`;
   if (tabBtnSyncScan) tabBtnSyncScan.addEventListener('click', () => switchSyncTab('scan'));
 
   function updateSyncStatusUI() {
-    const { syncId, syncKey, lastPushedAt, lastPulledAt } = SyncEngine.getSyncSettings();
+    const { gistId, syncKey, githubToken, lastPushedAt, lastPulledAt } = SyncEngine.getSyncSettings();
     const vaultInfoEl = document.getElementById('sync-vault-info');
     const lastActivityEl = document.getElementById('sync-last-activity');
     const badgeEl = document.getElementById('sync-active-badge');
 
-    if (syncId && syncKey) {
-      if (vaultInfoEl) vaultInfoEl.innerHTML = `<i class="fa-solid fa-lock" style="color: var(--accent-green);"></i> Vault ID: <code style="font-family: monospace;">${syncId.substring(0, 14)}...</code>`;
+    if (gistId && syncKey) {
+      if (vaultInfoEl) vaultInfoEl.innerHTML = `<i class="fa-solid fa-lock" style="color: var(--accent-green);"></i> Gist Vault ID: <code style="font-family: monospace;">${gistId.substring(0, 14)}...</code>`;
       if (badgeEl) {
-        badgeEl.textContent = 'Paired & Ready';
+        badgeEl.textContent = 'Gist Vault Active';
         badgeEl.style.backgroundColor = '#00a884';
       }
-    } else {
-      if (vaultInfoEl) vaultInfoEl.textContent = 'Vault ID: Unpaired (Generate QR or Scan to pair)';
+    } else if (githubToken) {
+      if (vaultInfoEl) vaultInfoEl.textContent = 'Gist Vault: Ready (Will auto-create Gist on first push)';
       if (badgeEl) {
-        badgeEl.textContent = 'Unpaired';
-        badgeEl.style.backgroundColor = '#8696a0';
+        badgeEl.textContent = 'PAT Token Set';
+        badgeEl.style.backgroundColor = '#53bdeb';
+      }
+    } else {
+      if (vaultInfoEl) vaultInfoEl.textContent = 'Gist Vault: PAT Token Required (Enter PAT below)';
+      if (badgeEl) {
+        badgeEl.textContent = 'Token Required';
+        badgeEl.style.backgroundColor = '#ea4335';
       }
     }
 
@@ -1868,14 +1874,23 @@ ${recMsgsStr}`;
   }
 
   async function renderQrCodeTab() {
-    let { syncId, syncKey } = SyncEngine.getSyncSettings();
-    if (!syncId || !syncKey) {
-      const newSess = await SyncEngine.generateNewSession();
-      syncId = newSess.syncId;
-      syncKey = newSess.syncKey;
+    let { gistId, syncKey, githubToken } = SyncEngine.getSyncSettings();
+    if (!githubToken) {
+      if (qrCodeContainer) qrCodeContainer.innerHTML = `<div style="padding: 20px; text-align: center; color: #ea4335; font-size: 12.5px;"><i class="fa-solid fa-triangle-exclamation" style="font-size: 26px; margin-bottom: 8px;"></i><br>GitHub PAT token required to generate sync QR code. Enter a token in TAB 1.</div>`;
+      return;
+    }
+    if (!gistId || !syncKey) {
+      try {
+        const newSess = await SyncEngine.generateNewSession(githubToken);
+        gistId = newSess.gistId;
+        syncKey = newSess.syncKey;
+      } catch (err) {
+        if (qrCodeContainer) qrCodeContainer.innerHTML = `<div style="padding: 16px; text-align: center; color: #ea4335; font-size: 12px;">${err.message}</div>`;
+        return;
+      }
     }
 
-    const syncUrl = SyncEngine.getSyncUrl(syncId, syncKey);
+    const syncUrl = SyncEngine.getSyncUrl(gistId, syncKey, githubToken);
     if (syncLinkInput) syncLinkInput.value = syncUrl;
 
     if (qrCodeContainer) {
@@ -1918,7 +1933,7 @@ ${recMsgsStr}`;
       const token = syncGithubTokenInput?.value.trim() || '';
       const gistId = syncGistIdInput?.value.trim() || '';
       SyncEngine.saveSyncSettings({ syncGithubToken: token, syncGistId: gistId });
-      showToast('GitHub Gist Vault settings saved! High-speed rate-limit free sync enabled.');
+      showToast('GitHub credentials saved!');
       updateSyncStatusUI();
     });
   }
@@ -1933,16 +1948,16 @@ ${recMsgsStr}`;
   if (btnSyncPush) {
     btnSyncPush.addEventListener('click', async () => {
       btnSyncPush.disabled = true;
-      btnSyncPush.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Encrypting & Uploading...`;
+      btnSyncPush.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Encrypting & Uploading to Gist...`;
       try {
         const res = await SyncEngine.pushToCloud();
-        showToast('All chats, API keys, models & settings pushed to cloud vault!');
+        showToast('All chats, API keys, models & settings pushed to Gist Vault!');
         updateSyncStatusUI();
       } catch (err) {
         showToast(err.message, 'error');
       } finally {
         btnSyncPush.disabled = false;
-        btnSyncPush.innerHTML = `<i class="fa-solid fa-cloud-arrow-up"></i> 📤 Push Data to Cloud Vault`;
+        btnSyncPush.innerHTML = `<i class="fa-solid fa-cloud-arrow-up"></i> 📤 Push Data to Gist Vault`;
       }
     });
   }
@@ -1951,7 +1966,7 @@ ${recMsgsStr}`;
   if (btnSyncPull) {
     btnSyncPull.addEventListener('click', async () => {
       btnSyncPull.disabled = true;
-      btnSyncPull.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Downloading & Decrypting...`;
+      btnSyncPull.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Downloading & Decrypting Gist...`;
       try {
         const res = await SyncEngine.pullFromCloud();
         loadPersonas();
@@ -1959,13 +1974,13 @@ ${recMsgsStr}`;
         if (personas && personas.length > 0) {
           selectPersona(activePersonaId || personas[0].id);
         }
-        showToast(`Successfully pulled and restored ${res.count} persona(s) and full settings!`);
+        showToast(`Successfully pulled and restored ${res.count} persona(s) & settings from Gist!`);
         updateSyncStatusUI();
       } catch (err) {
         showToast(err.message, 'error');
       } finally {
         btnSyncPull.disabled = false;
-        btnSyncPull.innerHTML = `<i class="fa-solid fa-cloud-arrow-down"></i> 📥 Pull Data from Cloud Vault`;
+        btnSyncPull.innerHTML = `<i class="fa-solid fa-cloud-arrow-down"></i> 📥 Pull Data from Gist Vault`;
       }
     });
   }
@@ -1974,7 +1989,7 @@ ${recMsgsStr}`;
   if (btnSyncSmart) {
     btnSyncSmart.addEventListener('click', async () => {
       btnSyncSmart.disabled = true;
-      btnSyncSmart.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Merging Local & Remote...`;
+      btnSyncSmart.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Merging Local & Gist...`;
       try {
         const res = await SyncEngine.smartSync();
         loadPersonas();
@@ -1982,13 +1997,13 @@ ${recMsgsStr}`;
         if (personas && personas.length > 0) {
           selectPersona(activePersonaId || personas[0].id);
         }
-        showToast('Smart sync complete! Local & remote merged and updated.');
+        showToast('Smart sync complete! Local & Gist vault merged and updated.');
         updateSyncStatusUI();
       } catch (err) {
         showToast(err.message, 'error');
       } finally {
         btnSyncSmart.disabled = false;
-        btnSyncSmart.innerHTML = `<i class="fa-solid fa-arrows-rotate"></i> 🔄 Smart Sync (Merge Local & Remote)`;
+        btnSyncSmart.innerHTML = `<i class="fa-solid fa-arrows-rotate"></i> 🔄 Smart Sync (Merge Local & Gist)`;
       }
     });
   }
