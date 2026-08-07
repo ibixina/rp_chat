@@ -1595,8 +1595,17 @@ ${recMsgsStr}`;
   }
 
   function toggleSidebar() {
-    const isCollapsed = appContainerEl.classList.contains('sidebar-collapsed');
-    setSidebarCollapsed(!isCollapsed);
+    if (window.innerWidth <= 768) {
+      const isChatOpen = appContainerEl.classList.contains('chat-open');
+      if (isChatOpen) {
+        appContainerEl.classList.remove('chat-open');
+      } else {
+        appContainerEl.classList.add('chat-open');
+      }
+    } else {
+      const isCollapsed = appContainerEl.classList.contains('sidebar-collapsed');
+      setSidebarCollapsed(!isCollapsed);
+    }
   }
 
   if (btnToggleSidebar) btnToggleSidebar.addEventListener('click', toggleSidebar);
@@ -2951,6 +2960,10 @@ ${recMsgsStr}`;
     const persona = LocalDB.getPersona(personaId);
 
     if (!persona) return;
+
+    if (appContainerEl) {
+      appContainerEl.classList.add('chat-open');
+    }
 
     emptyStateEl.classList.add('hidden');
     activeChatViewEl.classList.remove('hidden');
