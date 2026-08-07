@@ -3719,6 +3719,43 @@ ${recMsgsStr}`;
     messageInput.style.height = Math.min(messageInput.scrollHeight, 120) + 'px';
   });
 
+  // Mobile Soft-Keyboard & Visual Viewport Handler
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', () => {
+      if (window.innerWidth <= 768) {
+        const activeChatView = document.getElementById('active-chat-view');
+        if (activeChatView) {
+          activeChatView.style.height = `${window.visualViewport.height}px`;
+        }
+        scrollToBottom();
+      }
+    });
+
+    window.visualViewport.addEventListener('scroll', () => {
+      if (document.activeElement === messageInput) {
+        window.scrollTo(0, 0);
+      }
+    });
+  }
+
+  messageInput.addEventListener('focus', () => {
+    if (window.innerWidth <= 768) {
+      setTimeout(() => {
+        messageInput.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        scrollToBottom();
+      }, 300);
+    }
+  });
+
+  messageInput.addEventListener('blur', () => {
+    if (window.innerWidth <= 768) {
+      const activeChatView = document.getElementById('active-chat-view');
+      if (activeChatView) {
+        activeChatView.style.height = '';
+      }
+    }
+  });
+
   // Header Actions
   if (btnExportChat) btnExportChat.addEventListener('click', () => exportChatJson(activePersonaId));
 
