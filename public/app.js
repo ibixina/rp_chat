@@ -626,14 +626,32 @@ document.addEventListener('DOMContentLoaded', () => {
 
       let contentStr = '';
       if (file.truncated || !file.content) {
-        const rawHeaders = token ? { 'Authorization': `Bearer ${token}` } : {};
-        const rawRes = await fetch(file.raw_url, { headers: rawHeaders });
-        if (!rawRes.ok) {
-          throw new Error(`Failed to fetch raw Gist content (HTTP ${rawRes.status}).`);
+        // Strategy A: Fetch directly via GitHub API raw media endpoint (CORS-compliant with Authorization header)
+        try {
+          const rawApiRes = await fetch(`https://api.github.com/gists/${gistId}/raw`, {
+            headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+          });
+          if (rawApiRes.ok) {
+            contentStr = await rawApiRes.text();
+          }
+        } catch (e) {
+          console.warn('[SYNC] Gist API raw endpoint fetch failed, trying direct raw_url:', e);
         }
-        contentStr = await rawRes.text();
+
+        // Strategy B: Fallback to file.raw_url WITHOUT custom headers (prevents CORS preflight net::ERR_FAILED)
+        if (!contentStr && file.raw_url) {
+          const rawRes = await fetch(file.raw_url);
+          if (!rawRes.ok) {
+            throw new Error(`Failed to fetch raw Gist content (HTTP ${rawRes.status}).`);
+          }
+          contentStr = await rawRes.text();
+        }
       } else {
         contentStr = file.content;
+      }
+
+      if (!contentStr) {
+        throw new Error("Could not retrieve vault file content from GitHub Gist.");
       }
 
       return JSON.parse(contentStr);
