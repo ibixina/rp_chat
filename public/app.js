@@ -3719,18 +3719,25 @@ ${recMsgsStr}`;
     messageInput.style.height = Math.min(messageInput.scrollHeight, 120) + 'px';
   });
 
-  // Mobile Soft-Keyboard & Visual Viewport Handler
+  // Mobile & Fullscreen Mode Soft-Keyboard Visual Viewport Handler
   if (window.visualViewport) {
-    window.visualViewport.addEventListener('resize', () => {
-      if (window.innerWidth <= 768) {
-        const activeChatView = document.getElementById('active-chat-view');
-        if (activeChatView) {
-          activeChatView.style.height = `${window.visualViewport.height}px`;
+    const handleVisualViewportChange = () => {
+      const activeChatView = document.getElementById('active-chat-view');
+      const appContainer = document.querySelector('.app-container');
+      const isFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement);
+      const isMobile = window.innerWidth <= 768 || isFullscreen;
+
+      if (isMobile && activeChatView) {
+        const vpHeight = window.visualViewport.height;
+        activeChatView.style.height = `${vpHeight}px`;
+        if (appContainer && isFullscreen) {
+          appContainer.style.height = `${vpHeight}px`;
         }
         scrollToBottom();
       }
-    });
+    };
 
+    window.visualViewport.addEventListener('resize', handleVisualViewportChange);
     window.visualViewport.addEventListener('scroll', () => {
       if (document.activeElement === messageInput) {
         window.scrollTo(0, 0);
@@ -3739,16 +3746,24 @@ ${recMsgsStr}`;
   }
 
   messageInput.addEventListener('focus', () => {
-    if (window.innerWidth <= 768) {
+    const isFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement);
+    if (window.innerWidth <= 768 || isFullscreen) {
+      if (window.visualViewport) {
+        const activeChatView = document.getElementById('active-chat-view');
+        if (activeChatView) {
+          activeChatView.style.height = `${window.visualViewport.height}px`;
+        }
+      }
       setTimeout(() => {
         messageInput.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
         scrollToBottom();
-      }, 300);
+      }, 250);
     }
   });
 
   messageInput.addEventListener('blur', () => {
-    if (window.innerWidth <= 768) {
+    const isFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement);
+    if (!isFullscreen && window.innerWidth <= 768) {
       const activeChatView = document.getElementById('active-chat-view');
       if (activeChatView) {
         activeChatView.style.height = '';

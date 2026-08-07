@@ -1489,4 +1489,27 @@ html, body {
   }
 }
 
+/* ------------------------------------------------------------- */
+/* Web Fullscreen API Mode Support                               */
+/* ------------------------------------------------------------- */
+:fullscreen, :-webkit-full-screen {
+  width: 100vw !important;
+  height: 100% !important;
+  background-color: var(--bg-app) !important;
+  overflow: hidden !important;
+}
+
+:fullscreen .app-container, :-webkit-full-screen .app-container {
+  width: 100vw !important;
+  height: 100% !important;
+  overflow: hidden !important;
+}
+
+:fullscreen .active-chat-view, :-webkit-full-screen .active-chat-view {
+  height: 100% !important;
+  min-height: 0 !important;
+  flex: 1 !important;
+  overflow: hidden !important;
+}
+
 
