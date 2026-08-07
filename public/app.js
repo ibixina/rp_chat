@@ -534,9 +534,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // -------------------------------------------------------------
   // Multi-Device End-to-End Encrypted Sync Engine (Option 2)
+  // Support Gzip Compression & Auto-Chunking for Multi-MB Payloads
   // -------------------------------------------------------------
   const SyncEngine = {
     DEFAULT_RELAY: 'https://jsonblob.com/api/jsonBlob',
+    SAFE_CHUNK_SIZE: 7500, // 7.5 KB per chunk safe limit for 10 KB tier
 
     getSyncSettings() {
       const settings = LocalDB.getSettings();
@@ -557,6 +559,35 @@ document.addEventListener('DOMContentLoaded', () => {
       LocalDB.saveSettings(updates);
     },
 
+    async compressText(text) {
+      if (typeof CompressionStream !== 'undefined') {
+        try {
+          const blob = new Blob([text]);
+          const cs = new CompressionStream('gzip');
+          const stream = blob.stream().pipeThrough(cs);
+          const response = new Response(stream);
+          const arrayBuffer = await response.arrayBuffer();
+          return { compressed: true, data: this.arrayBufferToBase64(arrayBuffer) };
+        } catch (e) {
+          console.warn('[SYNC] Gzip compression failed, falling back to raw:', e);
+        }
+      }
+      return { compressed: false, data: text };
+    },
+
+    async decompressPayload(compressedObj) {
+      if (compressedObj && compressedObj.compressed && typeof DecompressionStream !== 'undefined') {
+        const rawBuffer = this.base64ToArrayBuffer(compressedObj.data);
+        const ds = new DecompressionStream('gzip');
+        const blob = new Blob([rawBuffer]);
+        const stream = blob.stream().pipeThrough(ds);
+        const response = new Response(stream);
+        const text = await response.text();
+        return JSON.parse(text);
+      }
+      return typeof compressedObj.data === 'string' ? JSON.parse(compressedObj.data) : compressedObj;
+    },
+
     async generateNewSession() {
       const keyObj = await crypto.subtle.generateKey(
         { name: "AES-GCM", length: 256 },
@@ -571,7 +602,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const res = await fetch(this.DEFAULT_RELAY, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ v: 1, created: new Date().toISOString(), data: '' })
+          body: JSON.stringify({ v: 2, created: new Date().toISOString(), data: '' })
         });
 
         if (res.ok) {
@@ -640,8 +671,13 @@ document.addEventListener('DOMContentLoaded', () => {
     async encryptPayload(jsonObj, base64Key) {
       const cryptoKey = await this.importKey(base64Key);
       const iv = crypto.getRandomValues(new Uint8Array(12));
-      const encodedText = new TextEncoder().encode(JSON.stringify(jsonObj));
 
+      // 1. Compress JSON
+      const jsonStr = JSON.stringify(jsonObj);
+      const compressedObj = await this.compressText(jsonStr);
+
+      // 2. Encrypt compressed object
+      const encodedText = new TextEncoder().encode(JSON.stringify(compressedObj));
       const encryptedBuffer = await crypto.subtle.encrypt(
         { name: "AES-GCM", iv: iv },
         cryptoKey,
@@ -649,7 +685,7 @@ document.addEventListener('DOMContentLoaded', () => {
       );
 
       return {
-        v: 1,
+        v: 2,
         iv: this.arrayBufferToBase64(iv),
         data: this.arrayBufferToBase64(encryptedBuffer),
         updatedAt: new Date().toISOString()
@@ -670,8 +706,52 @@ document.addEventListener('DOMContentLoaded', () => {
         ciphertext
       );
 
-      const jsonStr = new TextDecoder().decode(decryptedBuffer);
-      return JSON.parse(jsonStr);
+      const jsonText = new TextDecoder().decode(decryptedBuffer);
+      const compressedObj = JSON.parse(jsonText);
+      return await this.decompressPayload(compressedObj);
+    },
+
+    async uploadSingleBlob(blobId, payload) {
+      const url = `${this.DEFAULT_RELAY}/${blobId}`;
+      let res = await fetch(url, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (res.status === 404) {
+        const createRes = await fetch(this.DEFAULT_RELAY, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        if (createRes.ok) {
+          const loc = createRes.headers.get('location') || createRes.headers.get('Location');
+          if (loc) return loc.split('/').pop();
+        }
+      }
+
+      if (res.status === 429 || res.status === 413) {
+        const text = await res.text();
+        throw new Error(`Cloud relay limit: ${text || 'Size/Rate limit exceeded (HTTP ' + res.status + ')'}`);
+      }
+
+      if (!res.ok) {
+        throw new Error(`Cloud upload failed (HTTP ${res.status}).`);
+      }
+      return blobId;
+    },
+
+    async fetchSingleBlob(blobId) {
+      const url = `${this.DEFAULT_RELAY}/${blobId}`;
+      const res = await fetch(url);
+      if (res.status === 429) {
+        throw new Error("Cloud relay rate limit reached (HTTP 429). Please wait a moment before trying again.");
+      }
+      if (!res.ok) {
+        throw new Error(`Cloud vault not found (HTTP ${res.status}).`);
+      }
+      return await res.json();
     },
 
     async pushToCloud() {
@@ -684,32 +764,37 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const rawDB = LocalDB.getRaw();
       const encryptedObj = await this.encryptPayload(rawDB, syncKey);
+      const serializedObj = JSON.stringify(encryptedObj);
 
-      const blobUrl = `${this.DEFAULT_RELAY}/${syncId}`;
-      let res = await fetch(blobUrl, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(encryptedObj)
-      });
-
-      if (res.status === 404) {
-        const createRes = await fetch(this.DEFAULT_RELAY, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(encryptedObj)
-        });
-        if (createRes.ok) {
-          const loc = createRes.headers.get('location') || createRes.headers.get('Location');
-          if (loc) {
-            syncId = loc.split('/').pop();
-            this.saveSyncSettings({ syncId });
-          }
-          res = createRes;
+      // If payload is larger than SAFE_CHUNK_SIZE, automatically split into chunks!
+      if (serializedObj.length > this.SAFE_CHUNK_SIZE) {
+        const chunks = [];
+        for (let i = 0; i < serializedObj.length; i += this.SAFE_CHUNK_SIZE) {
+          chunks.push(serializedObj.substring(i, i + this.SAFE_CHUNK_SIZE));
         }
-      }
 
-      if (!res.ok) {
-        throw new Error("Cloud upload failed. Please check network connection.");
+        const chunkBlobIds = [];
+        for (let i = 0; i < chunks.length; i++) {
+          const chunkId = await this.uploadSingleBlob(`${syncId}_c${i}`, {
+            v: 2,
+            type: 'chunk',
+            index: i,
+            data: chunks[i]
+          });
+          chunkBlobIds.push(chunkId);
+        }
+
+        // Upload index blob
+        await this.uploadSingleBlob(syncId, {
+          v: 2,
+          type: 'chunk_index',
+          totalChunks: chunks.length,
+          chunkIds: chunkBlobIds,
+          updatedAt: new Date().toISOString()
+        });
+      } else {
+        // Fits in single blob
+        await this.uploadSingleBlob(syncId, encryptedObj);
       }
 
       const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -723,15 +808,22 @@ document.addEventListener('DOMContentLoaded', () => {
         throw new Error("No active sync pairing found. Generate or scan a QR code first.");
       }
 
-      const blobUrl = `${this.DEFAULT_RELAY}/${syncId}`;
-      const res = await fetch(blobUrl);
-      if (!res.ok) {
-        throw new Error("Cloud vault is empty or not found. Push data from your primary device first.");
+      const remoteData = await this.fetchSingleBlob(syncId);
+
+      let encryptedObj = null;
+
+      // Handle Chunked Storage
+      if (remoteData && remoteData.type === 'chunk_index' && Array.isArray(remoteData.chunkIds)) {
+        const chunkPromises = remoteData.chunkIds.map(id => this.fetchSingleBlob(id));
+        const chunkResults = await Promise.all(chunkPromises);
+        chunkResults.sort((a, b) => (a.index || 0) - (b.index || 0));
+        const fullSerializedStr = chunkResults.map(c => c.data).join('');
+        encryptedObj = JSON.parse(fullSerializedStr);
+      } else {
+        encryptedObj = remoteData;
       }
 
-      const encryptedObj = await res.json();
       const decryptedData = await this.decryptPayload(encryptedObj, syncKey);
-
       LocalDB.importAnyJson(decryptedData);
 
       const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -746,12 +838,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
       if (syncId && syncKey) {
         try {
-          const blobUrl = `${this.DEFAULT_RELAY}/${syncId}`;
-          const res = await fetch(blobUrl);
-          if (res.ok) {
-            const encryptedObj = await res.json();
-            remoteDB = await this.decryptPayload(encryptedObj, syncKey);
+          const remoteData = await this.fetchSingleBlob(syncId);
+          let encryptedObj = null;
+          if (remoteData && remoteData.type === 'chunk_index' && Array.isArray(remoteData.chunkIds)) {
+            const chunkResults = await Promise.all(remoteData.chunkIds.map(id => this.fetchSingleBlob(id)));
+            chunkResults.sort((a, b) => (a.index || 0) - (b.index || 0));
+            encryptedObj = JSON.parse(chunkResults.map(c => c.data).join(''));
+          } else {
+            encryptedObj = remoteData;
           }
+          remoteDB = await this.decryptPayload(encryptedObj, syncKey);
         } catch (e) {
           console.warn("[SYNC] Remote fetch error during smart sync:", e);
         }
