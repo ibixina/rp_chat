@@ -1040,9 +1040,33 @@ body, html {
   display: inline;
 }
 
+.message-action em {
+  font-style: italic;
+  font-weight: 500;
+  color: #a4d4ff;
+}
+
+.message-action strong {
+  font-style: italic;
+  font-weight: 700;
+  color: #ffffff;
+}
+
 .message-bubble.user .message-action {
   color: #a8d8fc;
   font-style: italic;
+}
+
+.message-bubble.user .message-action em {
+  font-style: italic;
+  font-weight: 500;
+  color: #cce6ff;
+}
+
+.message-bubble.user .message-action strong {
+  font-style: italic;
+  font-weight: 700;
+  color: #ffffff;
 }
 
 /* User Avatar & Settings Modal Styles */
@@ -1241,4 +1265,78 @@ body, html {
   box-shadow: 0 0 6px #53bdeb;
   animation: brainPulse 1.2s infinite ease-in-out;
 }
+
+/* ------------------------------------------------------------- */
+/* Toast Notification System                                     */
+/* ------------------------------------------------------------- */
+.toast-container {
+  position: fixed;
+  bottom: 28px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  pointer-events: none;
+}
+
+.toast {
+  background: var(--bg-header, #202c33);
+  color: var(--text-main, #e9edef);
+  border: 1px solid var(--accent-green, #00a884);
+  padding: 10px 20px;
+  border-radius: 24px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.6);
+  font-size: 13px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  animation: toastSlideUp 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  pointer-events: auto;
+  backdrop-filter: blur(8px);
+}
+
+.toast.toast-error {
+  border-color: #ea4335;
+}
+
+.toast.toast-info {
+  border-color: #53bdeb;
+}
+
+@keyframes toastSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* ------------------------------------------------------------- */
+/* Sync Modal & Tab Styles                                       */
+/* ------------------------------------------------------------- */
+.sync-tab-btn {
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.sync-tab-btn:hover {
+  color: var(--text-main, #e9edef) !important;
+}
+
+.sync-tab-btn.active {
+  color: var(--accent-green, #00a884) !important;
+  border-bottom-color: var(--accent-green, #00a884) !important;
+}
+
+#qr-code-container img, #qr-code-container canvas {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
 

@@ -390,7 +390,7 @@ document.addEventListener('DOMContentLoaded', () => {
         clean = clean.replace(/\[{2,}/g, '[').replace(/\]{2,}/g, ']');
         clean = clean.replace(/\[[ \t]*\]/g, '');
         clean = clean.replace(/"\]/g, '"').replace(/\["/g, '"');
-        clean = clean.replace(/\][ \t]*"/g, '"').replace(/"[ \t]*\[/g, '"');
+        clean = clean.replace(/\][ \t]*"/g, '"').replace(/"\s*\[/g, '"');
         clean = clean.replace(/\][ \t]*\[/g, ' ');
         clean = clean.replace(/\[[ \t]+/g, '[').replace(/[ \t]+\]/g, ']');
         clean = clean.replace(/[ \t]+([.,!?:;])/g, '$1');
@@ -506,6 +506,323 @@ document.addEventListener('DOMContentLoaded', () => {
       throw new Error('Unrecognized JSON format. File must be a full app backup or an exported persona/chat JSON.');
     }
   };
+
+  // -------------------------------------------------------------
+  // Toast Notification System
+  // -------------------------------------------------------------
+  function showToast(message, type = 'success') {
+    const container = document.getElementById('toast-container');
+    if (!container) return;
+
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+
+    let icon = 'fa-circle-check';
+    if (type === 'error') icon = 'fa-circle-xmark';
+    if (type === 'info') icon = 'fa-circle-info';
+
+    toast.innerHTML = `<i class="fa-solid ${icon}"></i> <span>${message}</span>`;
+    container.appendChild(toast);
+
+    setTimeout(() => {
+      toast.style.opacity = '0';
+      toast.style.transform = 'translateY(10px)';
+      toast.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
+      setTimeout(() => toast.remove(), 300);
+    }, 3500);
+  }
+
+  // -------------------------------------------------------------
+  // Multi-Device End-to-End Encrypted Sync Engine (Option 2)
+  // -------------------------------------------------------------
+  const SyncEngine = {
+    DEFAULT_RELAY: 'https://jsonblob.com/api/jsonBlob',
+
+    getSyncSettings() {
+      const settings = LocalDB.getSettings();
+      return {
+        syncId: settings.syncId || localStorage.getItem('persona_sync_id') || '',
+        syncKey: settings.syncKey || localStorage.getItem('persona_sync_key') || '',
+        lastPushedAt: settings.lastPushedAt || localStorage.getItem('persona_sync_last_pushed') || null,
+        lastPulledAt: settings.lastPulledAt || localStorage.getItem('persona_sync_last_pulled') || null
+      };
+    },
+
+    saveSyncSettings(updates) {
+      if (updates.syncId !== undefined) localStorage.setItem('persona_sync_id', updates.syncId);
+      if (updates.syncKey !== undefined) localStorage.setItem('persona_sync_key', updates.syncKey);
+      if (updates.lastPushedAt !== undefined) localStorage.setItem('persona_sync_last_pushed', updates.lastPushedAt);
+      if (updates.lastPulledAt !== undefined) localStorage.setItem('persona_sync_last_pulled', updates.lastPulledAt);
+
+      LocalDB.saveSettings(updates);
+    },
+
+    async generateNewSession() {
+      const keyObj = await crypto.subtle.generateKey(
+        { name: "AES-GCM", length: 256 },
+        true,
+        ["encrypt", "decrypt"]
+      );
+      const exportedRaw = await crypto.subtle.exportKey("raw", keyObj);
+      const syncKey = this.arrayBufferToBase64(exportedRaw);
+
+      let syncId = '';
+      try {
+        const res = await fetch(this.DEFAULT_RELAY, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ v: 1, created: new Date().toISOString(), data: '' })
+        });
+
+        if (res.ok) {
+          const locationHeader = res.headers.get('location') || res.headers.get('Location');
+          if (locationHeader) {
+            syncId = locationHeader.split('/').pop();
+          } else {
+            const bodyData = await res.json();
+            syncId = bodyData.id || res.headers.get('x-jsonblob-id') || '';
+          }
+        }
+      } catch (e) {
+        console.warn('[SYNC] Relay session init warning:', e);
+      }
+
+      if (!syncId) {
+        syncId = 'sync_' + Math.random().toString(36).substring(2, 12) + Date.now().toString(36);
+      }
+
+      this.saveSyncSettings({ syncId, syncKey });
+      return { syncId, syncKey };
+    },
+
+    getSyncUrl(syncId, syncKey) {
+      const base = window.location.origin + window.location.pathname;
+      return `${base}#sync?id=${encodeURIComponent(syncId)}&key=${encodeURIComponent(syncKey)}`;
+    },
+
+    parseSyncUrl(urlOrToken) {
+      try {
+        let str = (urlOrToken || '').trim();
+        if (str.includes('#sync?')) {
+          const hashPart = str.split('#sync?')[1];
+          const params = new URLSearchParams(hashPart);
+          const syncId = params.get('id');
+          const syncKey = params.get('key');
+          if (syncId && syncKey) return { syncId, syncKey };
+        }
+
+        if (str.startsWith('{')) {
+          const obj = JSON.parse(str);
+          if (obj.syncId && obj.syncKey) return obj;
+        }
+
+        if (str.includes('id=') && str.includes('key=')) {
+          const params = new URLSearchParams(str.startsWith('http') ? str.split('?')[1] : str);
+          const syncId = params.get('id');
+          const syncKey = params.get('key');
+          if (syncId && syncKey) return { syncId, syncKey };
+        }
+      } catch (e) {}
+      return null;
+    },
+
+    async importKey(base64Key) {
+      const rawBuffer = this.base64ToArrayBuffer(base64Key);
+      return await crypto.subtle.importKey(
+        "raw",
+        rawBuffer,
+        { name: "AES-GCM" },
+        false,
+        ["encrypt", "decrypt"]
+      );
+    },
+
+    async encryptPayload(jsonObj, base64Key) {
+      const cryptoKey = await this.importKey(base64Key);
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const encodedText = new TextEncoder().encode(JSON.stringify(jsonObj));
+
+      const encryptedBuffer = await crypto.subtle.encrypt(
+        { name: "AES-GCM", iv: iv },
+        cryptoKey,
+        encodedText
+      );
+
+      return {
+        v: 1,
+        iv: this.arrayBufferToBase64(iv),
+        data: this.arrayBufferToBase64(encryptedBuffer),
+        updatedAt: new Date().toISOString()
+      };
+    },
+
+    async decryptPayload(encryptedObj, base64Key) {
+      if (!encryptedObj || !encryptedObj.iv || !encryptedObj.data) {
+        throw new Error("Invalid encrypted cloud payload structure.");
+      }
+      const cryptoKey = await this.importKey(base64Key);
+      const iv = this.base64ToArrayBuffer(encryptedObj.iv);
+      const ciphertext = this.base64ToArrayBuffer(encryptedObj.data);
+
+      const decryptedBuffer = await crypto.subtle.decrypt(
+        { name: "AES-GCM", iv: iv },
+        cryptoKey,
+        ciphertext
+      );
+
+      const jsonStr = new TextDecoder().decode(decryptedBuffer);
+      return JSON.parse(jsonStr);
+    },
+
+    async pushToCloud() {
+      let { syncId, syncKey } = this.getSyncSettings();
+      if (!syncId || !syncKey) {
+        const newSession = await this.generateNewSession();
+        syncId = newSession.syncId;
+        syncKey = newSession.syncKey;
+      }
+
+      const rawDB = LocalDB.getRaw();
+      const encryptedObj = await this.encryptPayload(rawDB, syncKey);
+
+      const blobUrl = `${this.DEFAULT_RELAY}/${syncId}`;
+      let res = await fetch(blobUrl, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(encryptedObj)
+      });
+
+      if (res.status === 404) {
+        const createRes = await fetch(this.DEFAULT_RELAY, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(encryptedObj)
+        });
+        if (createRes.ok) {
+          const loc = createRes.headers.get('location') || createRes.headers.get('Location');
+          if (loc) {
+            syncId = loc.split('/').pop();
+            this.saveSyncSettings({ syncId });
+          }
+          res = createRes;
+        }
+      }
+
+      if (!res.ok) {
+        throw new Error("Cloud upload failed. Please check network connection.");
+      }
+
+      const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      this.saveSyncSettings({ lastPushedAt: now });
+      return { success: true, timestamp: now };
+    },
+
+    async pullFromCloud() {
+      const { syncId, syncKey } = this.getSyncSettings();
+      if (!syncId || !syncKey) {
+        throw new Error("No active sync pairing found. Generate or scan a QR code first.");
+      }
+
+      const blobUrl = `${this.DEFAULT_RELAY}/${syncId}`;
+      const res = await fetch(blobUrl);
+      if (!res.ok) {
+        throw new Error("Cloud vault is empty or not found. Push data from your primary device first.");
+      }
+
+      const encryptedObj = await res.json();
+      const decryptedData = await this.decryptPayload(encryptedObj, syncKey);
+
+      LocalDB.importAnyJson(decryptedData);
+
+      const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      this.saveSyncSettings({ lastPulledAt: now });
+
+      return { success: true, timestamp: now, count: decryptedData.personas?.length || 0 };
+    },
+
+    async smartSync() {
+      let remoteDB = null;
+      const { syncId, syncKey } = this.getSyncSettings();
+
+      if (syncId && syncKey) {
+        try {
+          const blobUrl = `${this.DEFAULT_RELAY}/${syncId}`;
+          const res = await fetch(blobUrl);
+          if (res.ok) {
+            const encryptedObj = await res.json();
+            remoteDB = await this.decryptPayload(encryptedObj, syncKey);
+          }
+        } catch (e) {
+          console.warn("[SYNC] Remote fetch error during smart sync:", e);
+        }
+      }
+
+      const localDB = LocalDB.getRaw();
+
+      if (!remoteDB) {
+        return await this.pushToCloud();
+      }
+
+      // Merge local and remote personas
+      const mergedPersonasMap = new Map();
+      (remoteDB.personas || []).forEach(p => mergedPersonasMap.set(p.id, p));
+      (localDB.personas || []).forEach(p => {
+        if (!mergedPersonasMap.has(p.id)) {
+          mergedPersonasMap.set(p.id, p);
+        } else {
+          const existing = mergedPersonasMap.get(p.id);
+          mergedPersonasMap.set(p.id, { ...existing, ...p });
+        }
+      });
+
+      // Merge messages per persona
+      const mergedMessages = { ...(remoteDB.messages || {}) };
+      for (const pId in (localDB.messages || {})) {
+        if (!mergedMessages[pId]) {
+          mergedMessages[pId] = localDB.messages[pId];
+        } else {
+          const msgMap = new Map();
+          mergedMessages[pId].forEach(m => msgMap.set(m.id, m));
+          localDB.messages[pId].forEach(m => msgMap.set(m.id, m));
+          mergedMessages[pId] = Array.from(msgMap.values()).sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp));
+        }
+      }
+
+      // Merge settings (including API keys & model choices)
+      const mergedSettings = {
+        ...(remoteDB.settings || {}),
+        ...(localDB.settings || {})
+      };
+
+      const mergedDB = {
+        personas: Array.from(mergedPersonasMap.values()),
+        messages: mergedMessages,
+        settings: mergedSettings
+      };
+
+      LocalDB.saveRaw(mergedDB);
+      return await this.pushToCloud();
+    },
+
+    arrayBufferToBase64(buffer) {
+      let binary = '';
+      const bytes = new Uint8Array(buffer);
+      for (let i = 0; i < bytes.byteLength; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      return btoa(binary);
+    },
+
+    base64ToArrayBuffer(base64) {
+      const binaryString = atob(base64);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      return bytes.buffer;
+    }
+  };
+
   // -------------------------------------------------------------
   // Client AI Completion Engine (OpenRouter / DeepInfra)
   // -------------------------------------------------------------
@@ -1254,6 +1571,313 @@ ${recMsgsStr}`;
       hideModal(confirmModal);
       if (confirmCallback) confirmCallback();
     });
+  }
+
+  // -------------------------------------------------------------
+  // Device Sync & QR Pairing UI Controllers
+  // -------------------------------------------------------------
+  const syncModal = document.getElementById('sync-modal');
+  const btnSyncHeader = document.getElementById('btn-sync-header');
+  const btnCloseSyncModal = document.getElementById('btn-close-sync-modal');
+  const btnCloseSyncModalFooter = document.getElementById('btn-close-sync-modal-footer');
+  const btnOpenSyncFromSettings = document.getElementById('btn-open-sync-from-settings');
+  const modalBtnOpenSync = document.getElementById('modal-btn-open-sync');
+
+  const tabBtnSyncAction = document.getElementById('tab-btn-sync-action');
+  const tabBtnSyncQr = document.getElementById('tab-btn-sync-qr');
+  const tabBtnSyncScan = document.getElementById('tab-btn-sync-scan');
+
+  const tabContentSyncAction = document.getElementById('tab-content-sync-action');
+  const tabContentSyncQr = document.getElementById('tab-content-sync-qr');
+  const tabContentSyncScan = document.getElementById('tab-content-sync-scan');
+
+  const btnSyncPush = document.getElementById('btn-sync-push');
+  const btnSyncPull = document.getElementById('btn-sync-pull');
+  const btnSyncSmart = document.getElementById('btn-sync-smart');
+
+  const qrCodeContainer = document.getElementById('qr-code-container');
+  const syncLinkInput = document.getElementById('sync-link-input');
+  const btnCopySyncLink = document.getElementById('btn-copy-sync-link');
+  const btnRegenerateSyncKey = document.getElementById('btn-regenerate-sync-key');
+
+  const btnStartQrScanner = document.getElementById('btn-start-qr-scanner');
+  const btnStopQrScanner = document.getElementById('btn-stop-qr-scanner');
+  const qrReaderContainer = document.getElementById('qr-reader-container');
+  const manualSyncTokenInput = document.getElementById('manual-sync-token-input');
+  const btnApplyManualToken = document.getElementById('btn-apply-manual-token');
+
+  let html5QrScannerInstance = null;
+
+  function switchSyncTab(activeTab) {
+    [tabBtnSyncAction, tabBtnSyncQr, tabBtnSyncScan].forEach(btn => {
+      btn?.classList.remove('active');
+    });
+    [tabContentSyncAction, tabContentSyncQr, tabContentSyncScan].forEach(content => {
+      content?.classList.add('hidden');
+    });
+
+    if (activeTab === 'action') {
+      tabBtnSyncAction?.classList.add('active');
+      tabContentSyncAction?.classList.remove('hidden');
+    } else if (activeTab === 'qr') {
+      tabBtnSyncQr?.classList.add('active');
+      tabContentSyncQr?.classList.remove('hidden');
+      renderQrCodeTab();
+    } else if (activeTab === 'scan') {
+      tabBtnSyncScan?.classList.add('active');
+      tabContentSyncScan?.classList.remove('hidden');
+    }
+  }
+
+  if (tabBtnSyncAction) tabBtnSyncAction.addEventListener('click', () => switchSyncTab('action'));
+  if (tabBtnSyncQr) tabBtnSyncQr.addEventListener('click', () => switchSyncTab('qr'));
+  if (tabBtnSyncScan) tabBtnSyncScan.addEventListener('click', () => switchSyncTab('scan'));
+
+  function updateSyncStatusUI() {
+    const { syncId, syncKey, lastPushedAt, lastPulledAt } = SyncEngine.getSyncSettings();
+    const vaultInfoEl = document.getElementById('sync-vault-info');
+    const lastActivityEl = document.getElementById('sync-last-activity');
+    const badgeEl = document.getElementById('sync-active-badge');
+
+    if (syncId && syncKey) {
+      if (vaultInfoEl) vaultInfoEl.innerHTML = `<i class="fa-solid fa-lock" style="color: var(--accent-green);"></i> Vault ID: <code style="font-family: monospace;">${syncId.substring(0, 14)}...</code>`;
+      if (badgeEl) {
+        badgeEl.textContent = 'Paired & Ready';
+        badgeEl.style.backgroundColor = '#00a884';
+      }
+    } else {
+      if (vaultInfoEl) vaultInfoEl.textContent = 'Vault ID: Unpaired (Generate QR or Scan to pair)';
+      if (badgeEl) {
+        badgeEl.textContent = 'Unpaired';
+        badgeEl.style.backgroundColor = '#8696a0';
+      }
+    }
+
+    let activityStr = 'Last Sync: Never';
+    if (lastPushedAt && lastPulledAt) {
+      activityStr = `Last Push: ${lastPushedAt} | Last Pull: ${lastPulledAt}`;
+    } else if (lastPushedAt) {
+      activityStr = `Last Push: ${lastPushedAt}`;
+    } else if (lastPulledAt) {
+      activityStr = `Last Pull: ${lastPulledAt}`;
+    }
+    if (lastActivityEl) lastActivityEl.textContent = activityStr;
+  }
+
+  async function renderQrCodeTab() {
+    let { syncId, syncKey } = SyncEngine.getSyncSettings();
+    if (!syncId || !syncKey) {
+      const newSess = await SyncEngine.generateNewSession();
+      syncId = newSess.syncId;
+      syncKey = newSess.syncKey;
+    }
+
+    const syncUrl = SyncEngine.getSyncUrl(syncId, syncKey);
+    if (syncLinkInput) syncLinkInput.value = syncUrl;
+
+    if (qrCodeContainer) {
+      qrCodeContainer.innerHTML = '';
+      if (typeof QRCode !== 'undefined') {
+        try {
+          new QRCode(qrCodeContainer, {
+            text: syncUrl,
+            width: 180,
+            height: 180,
+            colorDark: "#000000",
+            colorLight: "#ffffff",
+            correctLevel: QRCode.CorrectLevel.M
+          });
+        } catch (e) {
+          qrCodeContainer.innerHTML = `<img src="https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(syncUrl)}" alt="QR Code">`;
+        }
+      } else {
+        qrCodeContainer.innerHTML = `<img src="https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(syncUrl)}" alt="QR Code">`;
+      }
+    }
+    updateSyncStatusUI();
+  }
+
+  function openSyncModal() {
+    updateSyncStatusUI();
+    showModal(syncModal);
+  }
+
+  if (btnSyncHeader) btnSyncHeader.addEventListener('click', openSyncModal);
+  if (btnCloseSyncModal) btnCloseSyncModal.addEventListener('click', () => { stopCameraScanner(); hideModal(syncModal); });
+  if (btnCloseSyncModalFooter) btnCloseSyncModalFooter.addEventListener('click', () => { stopCameraScanner(); hideModal(syncModal); });
+  if (btnOpenSyncFromSettings) btnOpenSyncFromSettings.addEventListener('click', () => { hideModal(settingsModal); openSyncModal(); });
+  if (modalBtnOpenSync) modalBtnOpenSync.addEventListener('click', () => { hideModal(importModal); openSyncModal(); });
+
+  // PUSH Action
+  if (btnSyncPush) {
+    btnSyncPush.addEventListener('click', async () => {
+      btnSyncPush.disabled = true;
+      btnSyncPush.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Encrypting & Uploading...`;
+      try {
+        const res = await SyncEngine.pushToCloud();
+        showToast('All chats, API keys, models & settings pushed to cloud vault!');
+        updateSyncStatusUI();
+      } catch (err) {
+        showToast(err.message, 'error');
+      } finally {
+        btnSyncPush.disabled = false;
+        btnSyncPush.innerHTML = `<i class="fa-solid fa-cloud-arrow-up"></i> 📤 Push Data to Cloud Vault`;
+      }
+    });
+  }
+
+  // PULL Action
+  if (btnSyncPull) {
+    btnSyncPull.addEventListener('click', async () => {
+      btnSyncPull.disabled = true;
+      btnSyncPull.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Downloading & Decrypting...`;
+      try {
+        const res = await SyncEngine.pullFromCloud();
+        loadPersonas();
+        loadSettingsIntoUI();
+        if (personas && personas.length > 0) {
+          selectPersona(activePersonaId || personas[0].id);
+        }
+        showToast(`Successfully pulled and restored ${res.count} persona(s) and full settings!`);
+        updateSyncStatusUI();
+      } catch (err) {
+        showToast(err.message, 'error');
+      } finally {
+        btnSyncPull.disabled = false;
+        btnSyncPull.innerHTML = `<i class="fa-solid fa-cloud-arrow-down"></i> 📥 Pull Data from Cloud Vault`;
+      }
+    });
+  }
+
+  // SMART SYNC Action
+  if (btnSyncSmart) {
+    btnSyncSmart.addEventListener('click', async () => {
+      btnSyncSmart.disabled = true;
+      btnSyncSmart.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Merging Local & Remote...`;
+      try {
+        const res = await SyncEngine.smartSync();
+        loadPersonas();
+        loadSettingsIntoUI();
+        if (personas && personas.length > 0) {
+          selectPersona(activePersonaId || personas[0].id);
+        }
+        showToast('Smart sync complete! Local & remote merged and updated.');
+        updateSyncStatusUI();
+      } catch (err) {
+        showToast(err.message, 'error');
+      } finally {
+        btnSyncSmart.disabled = false;
+        btnSyncSmart.innerHTML = `<i class="fa-solid fa-arrows-rotate"></i> 🔄 Smart Sync (Merge Local & Remote)`;
+      }
+    });
+  }
+
+  // Copy Sync Link
+  if (btnCopySyncLink) {
+    btnCopySyncLink.addEventListener('click', () => {
+      if (syncLinkInput && syncLinkInput.value) {
+        navigator.clipboard.writeText(syncLinkInput.value);
+        showToast('Sync link copied to clipboard!');
+      }
+    });
+  }
+
+  // Regenerate Token
+  if (btnRegenerateSyncKey) {
+    btnRegenerateSyncKey.addEventListener('click', async () => {
+      showConfirmDialog({
+        title: 'Generate New Pairing Token',
+        message: 'This will reset your sync encryption key and generate a new session. Previously paired devices will need to scan the new QR code to stay in sync. Proceed?',
+        confirmText: 'Generate New Key',
+        danger: false,
+        onConfirm: async () => {
+          await SyncEngine.generateNewSession();
+          await renderQrCodeTab();
+          showToast('New sync session generated!');
+        }
+      });
+    });
+  }
+
+  // Camera QR Scanner
+  function stopCameraScanner() {
+    if (html5QrScannerInstance) {
+      try {
+        html5QrScannerInstance.stop().then(() => {
+          html5QrScannerInstance.clear();
+          html5QrScannerInstance = null;
+        }).catch(() => {});
+      } catch (e) {}
+    }
+    if (qrReaderContainer) qrReaderContainer.style.display = 'none';
+  }
+
+  if (btnStartQrScanner) {
+    btnStartQrScanner.addEventListener('click', () => {
+      if (typeof Html5Qrcode === 'undefined') {
+        showToast('QR Scanner library not loaded. Please paste sync token manually.', 'error');
+        return;
+      }
+      if (qrReaderContainer) qrReaderContainer.style.display = 'block';
+
+      try {
+        html5QrScannerInstance = new Html5Qrcode("qr-reader");
+        html5QrScannerInstance.start(
+          { facingMode: "environment" },
+          { fps: 10, qrbox: { width: 220, height: 220 } },
+          (decodedText) => {
+            const parsed = SyncEngine.parseSyncUrl(decodedText);
+            if (parsed) {
+              SyncEngine.saveSyncSettings(parsed);
+              stopCameraScanner();
+              updateSyncStatusUI();
+              switchSyncTab('action');
+              showToast('Device paired successfully! Click "Pull Data" to restore your chats & settings.');
+            } else {
+              showToast('Unrecognized QR code token format.', 'error');
+            }
+          },
+          () => {}
+        ).catch(err => {
+          showToast('Camera access error or permission denied.', 'error');
+          if (qrReaderContainer) qrReaderContainer.style.display = 'none';
+        });
+      } catch (err) {
+        showToast('Failed to start camera scanner.', 'error');
+      }
+    });
+  }
+
+  if (btnStopQrScanner) btnStopQrScanner.addEventListener('click', stopCameraScanner);
+
+  // Manual Token Pairing
+  if (btnApplyManualToken) {
+    btnApplyManualToken.addEventListener('click', () => {
+      const val = manualSyncTokenInput?.value || '';
+      const parsed = SyncEngine.parseSyncUrl(val);
+      if (parsed) {
+        SyncEngine.saveSyncSettings(parsed);
+        if (manualSyncTokenInput) manualSyncTokenInput.value = '';
+        updateSyncStatusUI();
+        switchSyncTab('action');
+        showToast('Device paired successfully! Click "Pull Data" to restore your chats & settings.');
+      } else {
+        showToast('Invalid sync link or token. Please check and try again.', 'error');
+      }
+    });
+  }
+
+  // Automatic Link Pairing on Load if URL contains #sync?id=...&key=...
+  if (window.location.hash && window.location.hash.includes('#sync?')) {
+    const parsed = SyncEngine.parseSyncUrl(window.location.href);
+    if (parsed) {
+      SyncEngine.saveSyncSettings(parsed);
+      history.replaceState(null, '', window.location.pathname);
+      setTimeout(() => {
+        openSyncModal();
+        showToast('Device paired via sync link! Click "Pull Data" to sync everything.');
+      }, 500);
+    }
   }
 
   // Image Cropper Modal Elements
@@ -2090,6 +2714,18 @@ ${recMsgsStr}`;
   // -------------------------------------------------------------
   // Message Bubbles & Actions
   // -------------------------------------------------------------
+  function cleanMarkdownSpam(text) {
+    // Strip bold wrapper on full brackets: [**text**] or [**text]
+    text = text.replace(/\[\*\*/g, '[').replace(/\*\*\]/g, ']');
+
+    // Clean stuttering ** bold glitch (e.g. '**word **word')
+    return text.split('\n').map(line => {
+      if ((line.match(/\*\*/g) || []).length >= 4) {
+        return line.replace(/\*\*([^\*\s]+)\s*\*\*/g, '$1 ').replace(/\*\*/g, '');
+      }
+      return line;
+    }).join('\n');
+  }
   function formatMessageText(str) {
     if (!str) return '';
     let text = str.trim();
