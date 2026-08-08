@@ -2315,6 +2315,40 @@ ${recMsgsStr}`;
     }
   }
 
+  const PROVIDER_PRESET_MODELS = {
+    openrouter: [
+      { value: 'sao10k/l3.3-euryale-70b', label: 'OpenRouter: sao10k/l3.3-euryale-70b (Unrestricted RP)' },
+      { value: 'nvidia/nemotron-3-ultra-550b-a55b:free', label: 'OpenRouter: nvidia/nemotron-3-ultra-550b-a55b:free (Free 550B)' },
+      { value: 'meta-llama/llama-3.3-70b-instruct', label: 'OpenRouter: meta-llama/llama-3.3-70b-instruct (Fast 70B)' },
+      { value: 'gryphe/mythomax-l2-13b', label: 'OpenRouter: gryphe/mythomax-l2-13b (Classic RP)' }
+    ],
+    deepinfra: [
+      { value: 'NousResearch/Hermes-3-Llama-3.1-70B', label: 'DeepInfra: NousResearch/Hermes-3-Llama-3.1-70B' },
+      { value: 'meta-llama/Llama-3.3-70B-Instruct', label: 'DeepInfra: meta-llama/Llama-3.3-70B-Instruct' }
+    ]
+  };
+
+  const BUILTIN_PRESET_VALUES = new Set([
+    'sao10k/l3.3-euryale-70b',
+    'nvidia/nemotron-3-ultra-550b-a55b:free',
+    'meta-llama/llama-3.3-70b-instruct',
+    'gryphe/mythomax-l2-13b',
+    'NousResearch/Hermes-3-Llama-3.1-70B',
+    'meta-llama/Llama-3.3-70B-Instruct'
+  ]);
+
+  const OPENROUTER_ONLY_PRESETS = new Set([
+    'sao10k/l3.3-euryale-70b',
+    'nvidia/nemotron-3-ultra-550b-a55b:free',
+    'meta-llama/llama-3.3-70b-instruct',
+    'gryphe/mythomax-l2-13b'
+  ]);
+
+  const DEEPINFRA_ONLY_PRESETS = new Set([
+    'NousResearch/Hermes-3-Llama-3.1-70B',
+    'meta-llama/Llama-3.3-70B-Instruct'
+  ]);
+
   let settingsProviderModels = {
     openrouter: 'sao10k/l3.3-euryale-70b',
     deepinfra: 'NousResearch/Hermes-3-Llama-3.1-70B'
@@ -2327,12 +2361,13 @@ ${recMsgsStr}`;
 
   function getSavedCustomModels() {
     const settings = LocalDB.getSettings();
-    return Array.isArray(settings.customModels) ? settings.customModels : [];
+    const list = Array.isArray(settings.customModels) ? settings.customModels : [];
+    return list.filter(m => m && !BUILTIN_PRESET_VALUES.has(m));
   }
 
   function saveCustomModel(modelStr) {
     const val = (modelStr || '').trim();
-    if (!val || val === 'custom') return;
+    if (!val || val === 'custom' || BUILTIN_PRESET_VALUES.has(val)) return;
 
     let customModels = getSavedCustomModels();
     if (!customModels.includes(val)) {
@@ -2346,34 +2381,59 @@ ${recMsgsStr}`;
     let customModels = getSavedCustomModels().filter(m => m !== modelStr);
     LocalDB.saveSettings({ customModels });
     renderCustomModelsInSelects();
-    loadSettingsIntoUI();
     showToast(`Removed custom model '${modelStr}'`);
   }
 
   function renderCustomModelsInSelects() {
     const customModels = getSavedCustomModels();
-    const selects = [
-      document.getElementById('settings-model-preset'),
-      document.getElementById('settings-memory-model-preset')
+    const activeProv = document.getElementById('card-deepinfra')?.classList.contains('active') ? 'deepinfra' : 'openrouter';
+    
+    let activeMemProvCard = 'openrouter';
+    if (document.getElementById('card-mem-deepinfra')?.classList.contains('active')) {
+      activeMemProvCard = 'deepinfra';
+    } else if (document.getElementById('card-mem-openrouter')?.classList.contains('active')) {
+      activeMemProvCard = 'openrouter';
+    } else {
+      activeMemProvCard = activeProv;
+    }
+
+    const selectConfigs = [
+      { id: 'settings-model-preset', provider: activeProv },
+      { id: 'settings-memory-model-preset', provider: activeMemProvCard }
     ];
 
-    selects.forEach(select => {
+    selectConfigs.forEach(({ id, provider }) => {
+      const select = document.getElementById(id);
       if (!select) return;
 
-      Array.from(select.querySelectorAll('.user-custom-model-option')).forEach(opt => opt.remove());
-      const customPlaceholder = select.querySelector('option[value="custom"]');
+      const currentVal = select.value;
+      const presets = PROVIDER_PRESET_MODELS[provider] || PROVIDER_PRESET_MODELS.openrouter;
+
+      select.innerHTML = '';
+
+      presets.forEach(p => {
+        const opt = document.createElement('option');
+        opt.value = p.value;
+        opt.textContent = p.label;
+        select.appendChild(opt);
+      });
 
       customModels.forEach(m => {
         const opt = document.createElement('option');
         opt.value = m;
         opt.textContent = `Custom: ${m}`;
         opt.className = 'user-custom-model-option';
-        if (customPlaceholder) {
-          select.insertBefore(opt, customPlaceholder);
-        } else {
-          select.appendChild(opt);
-        }
+        select.appendChild(opt);
       });
+
+      const customOpt = document.createElement('option');
+      customOpt.value = 'custom';
+      customOpt.textContent = '+ Custom Model Identifier...';
+      select.appendChild(customOpt);
+
+      if (currentVal && Array.from(select.options).some(o => o.value === currentVal)) {
+        select.value = currentVal;
+      }
     });
 
     renderSavedCustomModelsTags();
@@ -2462,7 +2522,6 @@ ${recMsgsStr}`;
   }
 
   function loadSettingsIntoUI() {
-    renderCustomModelsInSelects();
     const settings = LocalDB.getSettings();
 
     const openrouterKeyInput = document.getElementById('settings-openrouter-key');
@@ -2470,21 +2529,30 @@ ${recMsgsStr}`;
     if (openrouterKeyInput) openrouterKeyInput.value = settings.openrouterKey || '';
     if (deepinfraKeyInput) deepinfraKeyInput.value = settings.deepinfraKey || '';
 
-    const provider = settings.provider || 'openrouter';
+    const provider = (settings.provider || 'openrouter').toLowerCase();
     const cardOpenRouter = document.getElementById('card-openrouter');
     const cardDeepInfra = document.getElementById('card-deepinfra');
     if (provider === 'deepinfra') {
       cardOpenRouter?.classList.remove('active');
       cardDeepInfra?.classList.add('active');
+      const radio = cardDeepInfra?.querySelector('input[type="radio"]');
+      if (radio) radio.checked = true;
     } else {
       cardOpenRouter?.classList.add('active');
       cardDeepInfra?.classList.remove('active');
+      const radio = cardOpenRouter?.querySelector('input[type="radio"]');
+      if (radio) radio.checked = true;
     }
 
-    settingsProviderModels.openrouter = settings.lastOpenRouterModel || (provider === 'openrouter' ? settings.model : 'sao10k/l3.3-euryale-70b');
-    settingsProviderModels.deepinfra = settings.lastDeepInfraModel || (provider === 'deepinfra' ? settings.model : 'NousResearch/Hermes-3-Llama-3.1-70B');
+    let openrouterModel = settings.lastOpenRouterModel || (provider === 'openrouter' ? settings.model : 'sao10k/l3.3-euryale-70b');
+    if (DEEPINFRA_ONLY_PRESETS.has(openrouterModel)) openrouterModel = 'sao10k/l3.3-euryale-70b';
+    settingsProviderModels.openrouter = openrouterModel;
 
-    const currentActiveModel = settingsProviderModels[provider] || settings.model;
+    let deepinfraModel = settings.lastDeepInfraModel || (provider === 'deepinfra' ? settings.model : 'NousResearch/Hermes-3-Llama-3.1-70B');
+    if (OPENROUTER_ONLY_PRESETS.has(deepinfraModel)) deepinfraModel = 'NousResearch/Hermes-3-Llama-3.1-70B';
+    settingsProviderModels.deepinfra = deepinfraModel;
+
+    const currentActiveModel = settingsProviderModels[provider] || (provider === 'deepinfra' ? 'NousResearch/Hermes-3-Llama-3.1-70B' : 'sao10k/l3.3-euryale-70b');
     setModelUI(currentActiveModel);
 
     document.getElementById('settings-temp').value = settings.temperature !== undefined ? settings.temperature : 0.68;
@@ -2541,11 +2609,16 @@ ${recMsgsStr}`;
       groupMemoryModel.style.display = memProv === 'inherit' ? 'none' : 'block';
     }
 
-    settingsMemProviderModels.openrouter = settings.lastMemOpenRouterModel || (memProv === 'openrouter' ? settings.memoryModel : 'nvidia/nemotron-3-ultra-550b-a55b:free');
-    settingsMemProviderModels.deepinfra = settings.lastMemDeepInfraModel || (memProv === 'deepinfra' ? settings.memoryModel : 'NousResearch/Hermes-3-Llama-3.1-70B');
+    let memOpenrouterModel = settings.lastMemOpenRouterModel || (memProv === 'openrouter' ? settings.memoryModel : 'nvidia/nemotron-3-ultra-550b-a55b:free');
+    if (DEEPINFRA_ONLY_PRESETS.has(memOpenrouterModel)) memOpenrouterModel = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+    settingsMemProviderModels.openrouter = memOpenrouterModel;
+
+    let memDeepinfraModel = settings.lastMemDeepInfraModel || (memProv === 'deepinfra' ? settings.memoryModel : 'NousResearch/Hermes-3-Llama-3.1-70B');
+    if (OPENROUTER_ONLY_PRESETS.has(memDeepinfraModel)) memDeepinfraModel = 'NousResearch/Hermes-3-Llama-3.1-70B';
+    settingsMemProviderModels.deepinfra = memDeepinfraModel;
 
     if (memProv !== 'inherit') {
-      const currentMemActiveModel = settingsMemProviderModels[memProv] || settings.memoryModel;
+      const currentMemActiveModel = settingsMemProviderModels[memProv] || (memProv === 'deepinfra' ? 'NousResearch/Hermes-3-Llama-3.1-70B' : 'nvidia/nemotron-3-ultra-550b-a55b:free');
       setMemModelUI(currentMemActiveModel);
     }
   }
@@ -2563,12 +2636,23 @@ ${recMsgsStr}`;
     if (newProvider === 'deepinfra') {
       cardOpenRouter?.classList.remove('active');
       cardDeepInfra?.classList.add('active');
+      const radio = cardDeepInfra?.querySelector('input[type="radio"]');
+      if (radio) radio.checked = true;
     } else {
       cardOpenRouter?.classList.add('active');
       cardDeepInfra?.classList.remove('active');
+      const radio = cardOpenRouter?.querySelector('input[type="radio"]');
+      if (radio) radio.checked = true;
     }
 
-    const nextModel = settingsProviderModels[newProvider] || (newProvider === 'deepinfra' ? 'NousResearch/Hermes-3-Llama-3.1-70B' : 'sao10k/l3.3-euryale-70b');
+    let nextModel = settingsProviderModels[newProvider];
+    if (!nextModel || (newProvider === 'deepinfra' && OPENROUTER_ONLY_PRESETS.has(nextModel))) {
+      nextModel = 'NousResearch/Hermes-3-Llama-3.1-70B';
+    } else if (!nextModel || (newProvider === 'openrouter' && DEEPINFRA_ONLY_PRESETS.has(nextModel))) {
+      nextModel = 'sao10k/l3.3-euryale-70b';
+    }
+    settingsProviderModels[newProvider] = nextModel;
+
     setModelUI(nextModel);
   }
 
@@ -2599,7 +2683,13 @@ ${recMsgsStr}`;
     }
 
     if (newMemProv !== 'inherit') {
-      const nextMemModel = settingsMemProviderModels[newMemProv] || (newMemProv === 'deepinfra' ? 'NousResearch/Hermes-3-Llama-3.1-70B' : 'nvidia/nemotron-3-ultra-550b-a55b:free');
+      let nextMemModel = settingsMemProviderModels[newMemProv];
+      if (!nextMemModel || (newMemProv === 'deepinfra' && OPENROUTER_ONLY_PRESETS.has(nextMemModel))) {
+        nextMemModel = 'NousResearch/Hermes-3-Llama-3.1-70B';
+      } else if (!nextMemModel || (newMemProv === 'openrouter' && DEEPINFRA_ONLY_PRESETS.has(nextMemModel))) {
+        nextMemModel = 'nvidia/nemotron-3-ultra-550b-a55b:free';
+      }
+      settingsMemProviderModels[newMemProv] = nextMemModel;
       setMemModelUI(nextMemModel);
     }
   }
@@ -2776,8 +2866,8 @@ ${recMsgsStr}`;
       const lastMemDeepInfraModel = settingsMemProviderModels['deepinfra'];
       const memoryBudget = parseInt(memBudgetNumInput?.value || document.getElementById('settings-memory-budget')?.value || 5000, 10);
 
-      if (model) saveCustomModel(model);
-      if (memoryModel && memoryProvider !== 'inherit') saveCustomModel(memoryModel);
+      if (model && !BUILTIN_PRESET_VALUES.has(model)) saveCustomModel(model);
+      if (memoryModel && memoryProvider !== 'inherit' && !BUILTIN_PRESET_VALUES.has(memoryModel)) saveCustomModel(memoryModel);
 
       LocalDB.saveSettings({
         openrouterKey,
