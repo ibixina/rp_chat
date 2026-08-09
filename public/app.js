@@ -4568,6 +4568,7 @@ ${recMsgsStr}`;
       font-size: 12.5px;
       color: #e9edef;
       font-family: inherit;
+      cursor: pointer;
       animation: fadeInDown 0.3s ease;
     `;
 
@@ -4577,10 +4578,10 @@ ${recMsgsStr}`;
         <span>Gist vault update available ${timeStr ? `(${timeStr})` : ''}</span>
       </div>
       <div style="display: flex; align-items: center; gap: 6px;">
-        <button id="btn-banner-smart-sync" style="background: #00a884; color: #ffffff; border: none; padding: 4px 10px; border-radius: 12px; font-size: 11.5px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 4px; transition: opacity 0.2s;">
-          <i class="fa-solid fa-arrows-rotate"></i> Sync
+        <button id="btn-banner-open-sync" style="background: #00a884; color: #ffffff; border: none; padding: 4px 10px; border-radius: 12px; font-size: 11.5px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 4px; transition: opacity 0.2s;">
+          <i class="fa-solid fa-rotate"></i> Sync Menu
         </button>
-        <button id="btn-banner-dismiss" style="background: none; border: none; color: #8696a0; cursor: pointer; padding: 2px 4px; font-size: 13px;">
+        <button id="btn-banner-dismiss" style="background: none; border: none; color: #8696a0; cursor: pointer; padding: 2px 4px; font-size: 14px;" title="Dismiss notification">
           <i class="fa-solid fa-xmark"></i>
         </button>
       </div>
@@ -4588,33 +4589,19 @@ ${recMsgsStr}`;
 
     document.body.appendChild(banner);
 
-    const btnSync = banner.querySelector('#btn-banner-smart-sync');
-    if (btnSync) {
-      btnSync.addEventListener('click', async () => {
-        btnSync.disabled = true;
-        btnSync.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Syncing...`;
-        try {
-          const res = await SyncEngine.smartSync();
-          loadPersonas();
-          loadSettingsIntoUI();
-          if (personas && personas.length > 0) {
-            selectPersona(activePersonaId || personas[0].id);
-          }
-          showToast('Smart sync complete! Local & Gist vault updated.');
-          hasGistUpdateAvailable = false;
-          updateSyncStatusUI();
-          banner.remove();
-        } catch (err) {
-          showToast(err.message, 'error');
-          btnSync.disabled = false;
-          btnSync.innerHTML = `<i class="fa-solid fa-arrows-rotate"></i> Sync`;
-        }
-      });
-    }
+    // Clicking anywhere on the banner opens Device Sync & QR menu
+    banner.addEventListener('click', (e) => {
+      const dismissBtn = banner.querySelector('#btn-banner-dismiss');
+      if (dismissBtn && (dismissBtn.contains(e.target) || e.target === dismissBtn)) {
+        return;
+      }
+      openSyncModal();
+    });
 
     const btnDismiss = banner.querySelector('#btn-banner-dismiss');
     if (btnDismiss) {
-      btnDismiss.addEventListener('click', () => {
+      btnDismiss.addEventListener('click', (e) => {
+        e.stopPropagation();
         banner.style.opacity = '0';
         banner.style.transition = 'opacity 0.25s ease';
         setTimeout(() => banner.remove(), 250);
