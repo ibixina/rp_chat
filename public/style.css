@@ -182,9 +182,13 @@ body, html {
 .app-container.sidebar-collapsed .user-avatar-placeholder,
 .app-container.sidebar-collapsed #btn-sync-header,
 .app-container.sidebar-collapsed #btn-import-header,
-.app-container.sidebar-collapsed #btn-toggle-sidebar,
 .app-container.sidebar-collapsed #btn-add-persona {
   display: none !important;
+}
+
+.app-container.sidebar-collapsed #btn-toggle-sidebar {
+  display: inline-flex !important;
+  margin: 0 auto;
 }
 
 .app-container.sidebar-collapsed .header-actions {
@@ -213,7 +217,7 @@ body, html {
 
 .app-container.sidebar-collapsed .contact-item.active {
   border-left-color: var(--accent-green);
-  background-color: #2a3942;
+  background-color: var(--bg-input);
 }
 
 .app-container.sidebar-collapsed .contact-details {
@@ -225,10 +229,6 @@ body, html {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-}
-
-.app-container.sidebar-collapsed #btn-expand-sidebar {
-  display: inline-flex !important;
 }
 
 #btn-expand-sidebar,
