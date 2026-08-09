@@ -636,7 +636,8 @@ document.addEventListener('DOMContentLoaded', () => {
         lastPushedAt: settings.lastPushedAt || localStorage.getItem('persona_sync_last_pushed') || null,
         lastPulledAt: settings.lastPulledAt || localStorage.getItem('persona_sync_last_pulled') || null,
         githubToken: settings.syncGithubToken || localStorage.getItem('persona_sync_github_token') || '',
-        gistId: settings.syncGistId || localStorage.getItem('persona_sync_gist_id') || ''
+        gistId: settings.syncGistId || localStorage.getItem('persona_sync_gist_id') || '',
+        lastGistEtag: settings.lastGistEtag || localStorage.getItem('persona_sync_last_gist_etag') || ''
       };
     },
 
@@ -647,6 +648,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (updates.lastPulledAt !== undefined) localStorage.setItem('persona_sync_last_pulled', updates.lastPulledAt);
       if (updates.githubToken !== undefined) localStorage.setItem('persona_sync_github_token', updates.githubToken);
       if (updates.gistId !== undefined) localStorage.setItem('persona_sync_gist_id', updates.gistId);
+      if (updates.lastGistEtag !== undefined) localStorage.setItem('persona_sync_last_gist_etag', updates.lastGistEtag);
 
       LocalDB.saveSettings(updates);
     },
@@ -689,6 +691,10 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!res.ok) {
         throw new Error(`GitHub Gist Error (${res.status}): ${res.responseText}`);
       }
+      const etag = res.getResponseHeader('ETag') || res.getResponseHeader('etag') || '';
+      if (etag) {
+        this.saveSyncSettings({ lastGistEtag: etag });
+      }
       return JSON.parse(res.responseText);
     },
 
@@ -709,6 +715,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
       if (!res.ok) {
         throw new Error(`GitHub Gist Pull Error (${res.status}). Verify Gist ID and PAT token.`);
+      }
+      const etag = res.getResponseHeader('ETag') || res.getResponseHeader('etag') || '';
+      if (etag) {
+        this.saveSyncSettings({ lastGistEtag: etag });
       }
       const data = JSON.parse(res.responseText);
       const file = data.files['persona_sync_vault.enc'];
@@ -741,6 +751,45 @@ document.addEventListener('DOMContentLoaded', () => {
 
       onProgress?.(`Vault download complete (${formatBytes(contentStr.length)})`, 55);
       return JSON.parse(contentStr);
+    },
+
+    async checkGistUpdate(onProgress) {
+      const { githubToken, gistId, lastGistEtag } = this.getSyncSettings();
+      if (!gistId) return { hasUpdate: false, notConfigured: true };
+
+      const headers = { 'Accept': 'application/vnd.github.v3+json' };
+      if (githubToken) headers['Authorization'] = `Bearer ${githubToken}`;
+      if (lastGistEtag) headers['If-None-Match'] = lastGistEtag;
+
+      onProgress?.('Checking Gist update (Method 1: If-None-Match)...', 50);
+
+      const res = await requestWithProgress({
+        method: 'GET',
+        url: `https://api.github.com/gists/${gistId}`,
+        headers: headers
+      });
+
+      if (res.status === 304) {
+        onProgress?.('Check complete: 304 Not Modified (0 bytes payload). Up to date.', 100);
+        logEvent('SYNC', 'Gist update check: 304 Not Modified. No payload downloaded, Gist is up to date.');
+        return { hasUpdate: false, notModified: true, status: 304 };
+      }
+
+      if (res.ok) {
+        const newEtag = res.getResponseHeader('ETag') || res.getResponseHeader('etag') || '';
+        const data = JSON.parse(res.responseText);
+        onProgress?.(`Check complete: Found Gist update (${data.updated_at})!`, 100);
+        logEvent('SYNC', 'Gist update check: 200 OK. New update detected on Gist!', { newEtag, updatedAt: data.updated_at });
+        return {
+          hasUpdate: true,
+          status: 200,
+          newEtag: newEtag,
+          updatedAt: data.updated_at,
+          commitSha: data.history?.[0]?.version
+        };
+      }
+
+      throw new Error(`GitHub Gist Check Error (${res.status}). Verify Gist ID & PAT.`);
     },
 
     async compressText(text) {
@@ -2076,8 +2125,15 @@ ${recMsgsStr}`;
     if (gistId && syncKey) {
       if (vaultInfoEl) vaultInfoEl.innerHTML = `<i class="fa-solid fa-lock" style="color: var(--accent-green);"></i> Gist Vault ID: <code style="font-family: monospace;">${gistId.substring(0, 14)}...</code>`;
       if (badgeEl) {
-        badgeEl.textContent = 'Gist Vault Active';
-        badgeEl.style.backgroundColor = '#00a884';
+        if (hasGistUpdateAvailable) {
+          badgeEl.textContent = 'Gist Update Available!';
+          badgeEl.style.backgroundColor = '#eab308';
+          badgeEl.style.color = '#000000';
+        } else {
+          badgeEl.textContent = 'Gist Vault Active';
+          badgeEl.style.backgroundColor = '#00a884';
+          badgeEl.style.color = '#ffffff';
+        }
       }
     } else if (githubToken) {
       if (vaultInfoEl) vaultInfoEl.textContent = 'Gist Vault: Ready (Will auto-create Gist on first push)';
@@ -2183,6 +2239,7 @@ ${recMsgsStr}`;
       updateSyncProgress('Preparing push...', 5);
       try {
         const res = await SyncEngine.pushToCloud((label, pct) => updateSyncProgress(label, pct));
+        hasGistUpdateAvailable = false;
         showToast('All chats, API keys, models & settings pushed to Gist Vault!');
         updateSyncStatusUI();
         hideSyncProgress(2000);
@@ -2204,6 +2261,7 @@ ${recMsgsStr}`;
       updateSyncProgress('Preparing pull...', 5);
       try {
         const res = await SyncEngine.pullFromCloud((label, pct) => updateSyncProgress(label, pct));
+        hasGistUpdateAvailable = false;
         loadPersonas();
         loadSettingsIntoUI();
         if (personas && personas.length > 0) {
@@ -2230,6 +2288,7 @@ ${recMsgsStr}`;
       updateSyncProgress('Preparing smart sync...', 5);
       try {
         const res = await SyncEngine.smartSync((label, pct) => updateSyncProgress(label, pct));
+        hasGistUpdateAvailable = false;
         loadPersonas();
         loadSettingsIntoUI();
         if (personas && personas.length > 0) {
@@ -2248,7 +2307,38 @@ ${recMsgsStr}`;
     });
   }
 
-  // Copy Sync Link
+  let hasGistUpdateAvailable = false;
+
+  // CHECK GIST UPDATE (Method 1: If-None-Match ETag check)
+  const btnCheckGistUpdate = document.getElementById('btn-check-gist-update');
+  if (btnCheckGistUpdate) {
+    btnCheckGistUpdate.addEventListener('click', async () => {
+      btnCheckGistUpdate.disabled = true;
+      btnCheckGistUpdate.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Checking (0 Bytes)...`;
+      updateSyncProgress('Checking for Gist updates...', 10);
+      try {
+        const checkRes = await SyncEngine.checkGistUpdate((lbl, pct) => updateSyncProgress(lbl, pct));
+        if (checkRes.hasUpdate) {
+          hasGistUpdateAvailable = true;
+          const timeStr = checkRes.updatedAt ? new Date(checkRes.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+          showToast(`⚡ Gist update detected! (${timeStr}) Click "Pull Data" to restore.`, 'info');
+        } else if (checkRes.notModified) {
+          hasGistUpdateAvailable = false;
+          showToast('✅ Gist is up to date! (HTTP 304 Not Modified — 0 bytes downloaded)');
+        } else {
+          showToast('No Gist updates found.');
+        }
+        updateSyncStatusUI();
+        hideSyncProgress(2000);
+      } catch (err) {
+        showToast(err.message, 'error');
+        hideSyncProgress(500);
+      } finally {
+        btnCheckGistUpdate.disabled = false;
+        btnCheckGistUpdate.innerHTML = `<i class="fa-solid fa-cloud-sun"></i> ⚡ Check Gist Update (0 Bytes)`;
+      }
+    });
+  }
   if (btnCopySyncLink) {
     btnCopySyncLink.addEventListener('click', () => {
       if (syncLinkInput && syncLinkInput.value) {
