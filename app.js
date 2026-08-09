@@ -561,6 +561,13 @@ document.addEventListener('DOMContentLoaded', () => {
     if (fillEl) fillEl.style.width = `${cleanPercent}%`;
   }
 
+  function hideSyncProgress(delay = 1800) {
+    setTimeout(() => {
+      const box = document.getElementById('sync-progress-box');
+      if (box) box.classList.add('hidden');
+    }, delay);
+  }
+
   function formatBytes(bytes) {
     if (bytes === 0 || !bytes || isNaN(bytes)) return '0 B';
     const k = 1024;
