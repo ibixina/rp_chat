@@ -1655,6 +1655,7 @@ ${recMsgsStr}`;
   let personas = [];
   let activePersonaId = null;
   const generatingPersonas = {};
+  const activeStreamingState = {};
   const memorySummarizingState = {};
 
   function updateMemorySummarizingUI(personaId) {
@@ -3297,6 +3298,7 @@ ${recMsgsStr}`;
   // Persona Selection & Active View
   // -------------------------------------------------------------
   function selectPersona(personaId) {
+    const isSamePersona = activePersonaId === personaId;
     activePersonaId = personaId;
     const persona = LocalDB.getPersona(personaId);
 
@@ -3317,7 +3319,12 @@ ${recMsgsStr}`;
     updateMemorySummarizingUI(personaId);
 
     renderContactList(LocalDB.getPersonas());
-    renderChatFeed(personaId);
+
+    if (!isSamePersona) {
+      renderChatFeed(personaId);
+    } else {
+      scrollToBottomIfNearBottom();
+    }
   }
 
   const MESSAGE_BATCH_SIZE = 30;
@@ -3358,6 +3365,19 @@ ${recMsgsStr}`;
     visibleMessages.forEach(msg => {
       appendMessageBubble(msg);
     });
+
+    const streamState = activeStreamingState[activePersonaId];
+    if (streamState && streamState.fullText) {
+      const ghostMsgObj = {
+        id: streamState.assistantMsgId,
+        sender: 'persona',
+        text: streamState.fullText,
+        timestamp: new Date().toISOString()
+      };
+      const ghostBubble = appendMessageBubble(ghostMsgObj);
+      ghostBubble.classList.add('streaming-ghost');
+      streamState.bubbleEl = ghostBubble;
+    }
 
     if (generatingPersonas[activePersonaId]) {
       showTypingIndicator();
@@ -3843,7 +3863,11 @@ ${recMsgsStr}`;
     renderContactList(LocalDB.getPersonas());
 
     const assistantMsgId = `msg-${Date.now()}`;
-    let assistantMsgBubble = null;
+    activeStreamingState[personaId] = {
+      assistantMsgId: assistantMsgId,
+      fullText: '',
+      bubbleEl: null
+    };
     let assistantText = '';
 
     try {
@@ -3855,25 +3879,34 @@ ${recMsgsStr}`;
       const promptMessages = overridePromptMessages || preparePromptMessages(persona, messages, settings, extraSteering);
 
       assistantText = await streamAiCompletion(promptMessages, settings, (chunkText) => {
+        const state = activeStreamingState[personaId];
+        if (state) {
+          state.fullText += chunkText;
+        }
+
         if (activePersonaId === personaId) {
-          if (!assistantMsgBubble) {
+          const currentBubble = state ? state.bubbleEl : null;
+          const isBubbleInDom = currentBubble && document.body.contains(currentBubble);
+
+          if (!isBubbleInDom) {
             const newMsgObj = {
               id: assistantMsgId,
               sender: 'persona',
-              text: chunkText,
+              text: state ? state.fullText : chunkText,
               timestamp: new Date().toISOString()
             };
-            assistantMsgBubble = appendMessageBubble(newMsgObj);
-            assistantMsgBubble.classList.add('streaming-ghost');
+            const newBubble = appendMessageBubble(newMsgObj);
+            newBubble.classList.add('streaming-ghost');
+            if (state) state.bubbleEl = newBubble;
 
             const typingInd = document.getElementById('typing-indicator-bubble');
             if (typingInd) {
-              chatFeedEl.insertBefore(assistantMsgBubble, typingInd);
+              chatFeedEl.insertBefore(newBubble, typingInd);
             }
           } else {
-            const textEl = assistantMsgBubble.querySelector('.message-text');
+            const textEl = currentBubble.querySelector('.message-text');
             if (textEl) {
-              const currentRaw = (textEl.dataset.rawText || '') + chunkText;
+              const currentRaw = state ? state.fullText : ((textEl.dataset.rawText || '') + chunkText);
               textEl.dataset.rawText = currentRaw;
               textEl.innerHTML = formatMessageText(currentRaw);
             }
@@ -3922,11 +3955,9 @@ ${recMsgsStr}`;
         scrollToBottomIfNearBottom();
       }
     } finally {
+      delete activeStreamingState[personaId];
       generatingPersonas[personaId] = false;
       removeTypingIndicator();
-      if (assistantMsgBubble) {
-        assistantMsgBubble.classList.remove('streaming-ghost');
-      }
       if (activePersonaId === personaId) {
         updateHeaderStatus(personaId);
         scrollToBottomIfNearBottom();
