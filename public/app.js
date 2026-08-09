@@ -2240,6 +2240,8 @@ ${recMsgsStr}`;
       try {
         const res = await SyncEngine.pushToCloud((label, pct) => updateSyncProgress(label, pct));
         hasGistUpdateAvailable = false;
+        const banner = document.getElementById('gist-update-floating-banner');
+        if (banner) banner.remove();
         showToast('All chats, API keys, models & settings pushed to Gist Vault!');
         updateSyncStatusUI();
         hideSyncProgress(2000);
@@ -2262,6 +2264,8 @@ ${recMsgsStr}`;
       try {
         const res = await SyncEngine.pullFromCloud((label, pct) => updateSyncProgress(label, pct));
         hasGistUpdateAvailable = false;
+        const banner = document.getElementById('gist-update-floating-banner');
+        if (banner) banner.remove();
         loadPersonas();
         loadSettingsIntoUI();
         if (personas && personas.length > 0) {
@@ -2289,6 +2293,8 @@ ${recMsgsStr}`;
       try {
         const res = await SyncEngine.smartSync((label, pct) => updateSyncProgress(label, pct));
         hasGistUpdateAvailable = false;
+        const banner = document.getElementById('gist-update-floating-banner');
+        if (banner) banner.remove();
         loadPersonas();
         loadSettingsIntoUI();
         if (personas && personas.length > 0) {
@@ -2322,6 +2328,7 @@ ${recMsgsStr}`;
           hasGistUpdateAvailable = true;
           const timeStr = checkRes.updatedAt ? new Date(checkRes.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
           showToast(`⚡ Gist update detected! (${timeStr}) Click "Pull Data" to restore.`, 'info');
+          showGistUpdateBanner(checkRes.updatedAt);
         } else if (checkRes.notModified) {
           hasGistUpdateAvailable = false;
           showToast('✅ Gist is up to date! (HTTP 304 Not Modified — 0 bytes downloaded)');
@@ -4535,6 +4542,102 @@ ${recMsgsStr}`;
       .replace(/'/g, '&#039;');
   }
 
+  function showGistUpdateBanner(updatedAt) {
+    const existing = document.getElementById('gist-update-floating-banner');
+    if (existing) existing.remove();
+
+    const timeStr = updatedAt ? new Date(updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+
+    const banner = document.createElement('div');
+    banner.id = 'gist-update-floating-banner';
+    banner.style.cssText = `
+      position: fixed;
+      top: 60px;
+      right: 20px;
+      z-index: 9999;
+      background: rgba(17, 27, 33, 0.94);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(83, 189, 235, 0.5);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+      padding: 8px 14px;
+      border-radius: 20px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 12.5px;
+      color: #e9edef;
+      font-family: inherit;
+      animation: fadeInDown 0.3s ease;
+    `;
+
+    banner.innerHTML = `
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <i class="fa-solid fa-cloud-arrow-down" style="color: #53bdeb; font-size: 14px;"></i>
+        <span>Gist vault update available ${timeStr ? `(${timeStr})` : ''}</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 6px;">
+        <button id="btn-banner-smart-sync" style="background: #00a884; color: #ffffff; border: none; padding: 4px 10px; border-radius: 12px; font-size: 11.5px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 4px; transition: opacity 0.2s;">
+          <i class="fa-solid fa-arrows-rotate"></i> Sync
+        </button>
+        <button id="btn-banner-dismiss" style="background: none; border: none; color: #8696a0; cursor: pointer; padding: 2px 4px; font-size: 13px;">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+    `;
+
+    document.body.appendChild(banner);
+
+    const btnSync = banner.querySelector('#btn-banner-smart-sync');
+    if (btnSync) {
+      btnSync.addEventListener('click', async () => {
+        btnSync.disabled = true;
+        btnSync.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Syncing...`;
+        try {
+          const res = await SyncEngine.smartSync();
+          loadPersonas();
+          loadSettingsIntoUI();
+          if (personas && personas.length > 0) {
+            selectPersona(activePersonaId || personas[0].id);
+          }
+          showToast('Smart sync complete! Local & Gist vault updated.');
+          hasGistUpdateAvailable = false;
+          updateSyncStatusUI();
+          banner.remove();
+        } catch (err) {
+          showToast(err.message, 'error');
+          btnSync.disabled = false;
+          btnSync.innerHTML = `<i class="fa-solid fa-arrows-rotate"></i> Sync`;
+        }
+      });
+    }
+
+    const btnDismiss = banner.querySelector('#btn-banner-dismiss');
+    if (btnDismiss) {
+      btnDismiss.addEventListener('click', () => {
+        banner.style.opacity = '0';
+        banner.style.transition = 'opacity 0.25s ease';
+        setTimeout(() => banner.remove(), 250);
+      });
+    }
+  }
+
+  async function checkAutoGistUpdateOnLaunch() {
+    const { githubToken, gistId } = SyncEngine.getSyncSettings();
+    if (!githubToken || !gistId) return;
+
+    try {
+      const checkRes = await SyncEngine.checkGistUpdate();
+      if (checkRes.hasUpdate) {
+        hasGistUpdateAvailable = true;
+        updateSyncStatusUI();
+        showGistUpdateBanner(checkRes.updatedAt);
+      }
+    } catch (err) {
+      console.warn('[SYNC] Auto Gist check on launch failed:', err);
+    }
+  }
+
   // -------------------------------------------------------------
   // Initialization Kickoff
   // -------------------------------------------------------------
@@ -4544,6 +4647,10 @@ ${recMsgsStr}`;
     applyTheme(settings.theme || 'whatsapp-dark');
     loadSettingsIntoUI();
     loadPersonas();
+
+    setTimeout(() => {
+      checkAutoGistUpdateOnLaunch();
+    }, 1000);
   }
 
   init();
