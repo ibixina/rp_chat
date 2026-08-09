@@ -180,7 +180,9 @@ body, html {
 }
 
 .app-container.sidebar-collapsed .user-avatar-placeholder,
+.app-container.sidebar-collapsed #btn-sync-header,
 .app-container.sidebar-collapsed #btn-import-header,
+.app-container.sidebar-collapsed #btn-toggle-sidebar,
 .app-container.sidebar-collapsed #btn-add-persona {
   display: none !important;
 }
