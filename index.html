@@ -606,6 +606,17 @@
             Sync all your chats, API keys, AI models, character profiles, story memories, and settings across your devices using a private GitHub Gist vault. Data is end-to-end encrypted (AES-256) on your device before uploading.
           </p>
 
+          <!-- Sync Progress Box -->
+          <div id="sync-progress-box" class="hidden" style="margin-bottom: 14px; padding: 12px 14px; background: var(--bg-header); border: 1px solid var(--border-color); border-radius: 8px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; font-size: 12px; margin-bottom: 6px; color: var(--text-main);">
+              <span id="sync-progress-label" style="font-weight: 600;"><i class="fa-solid fa-spinner fa-spin" style="color: var(--accent-green);"></i> Syncing...</span>
+              <span id="sync-progress-percent" style="font-weight: 700; color: var(--accent-green);">0%</span>
+            </div>
+            <div class="progress-bar-bg" style="width: 100%; height: 8px; background: var(--bg-input, #2a3942); border-radius: 4px; overflow: hidden;">
+              <div id="sync-progress-fill" style="width: 0%; height: 100%; background: linear-gradient(90deg, #00a884, #53bdeb); border-radius: 4px; transition: width 0.25s ease;"></div>
+            </div>
+          </div>
+
           <div style="display: flex; flex-direction: column; gap: 10px; margin-bottom: 16px;">
             <button type="button" class="btn btn-primary" id="btn-sync-push" style="padding: 10px; font-size: 13px; display: flex; align-items: center; justify-content: center; gap: 8px; background-color: var(--accent-green);">
               <i class="fa-solid fa-cloud-arrow-up"></i> 📤 Push Data to Gist Vault

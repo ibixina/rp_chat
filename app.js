@@ -202,11 +202,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
     getSettings() {
       const raw = this.getRaw();
+      const rawSet = raw.settings || {};
+      const provider = (rawSet.provider || 'openrouter').toLowerCase();
+      const model = rawSet.model || (provider === 'deepinfra' ? 'NousResearch/Hermes-3-Llama-3.1-70B' : 'sao10k/l3.3-euryale-70b');
+      const memoryProvider = (rawSet.memoryProvider || 'inherit').toLowerCase();
+      const memoryModel = rawSet.memoryModel || 'nvidia/nemotron-3-ultra-550b-a55b:free';
+
       return {
         provider: 'openrouter',
         model: 'sao10k/l3.3-euryale-70b',
-        lastOpenRouterModel: 'sao10k/l3.3-euryale-70b',
-        lastDeepInfraModel: 'NousResearch/Hermes-3-Llama-3.1-70B',
+        lastOpenRouterModel: rawSet.lastOpenRouterModel || (provider === 'openrouter' ? model : 'sao10k/l3.3-euryale-70b'),
+        lastDeepInfraModel: rawSet.lastDeepInfraModel || (provider === 'deepinfra' ? model : 'NousResearch/Hermes-3-Llama-3.1-70B'),
         temperature: 0.68,
         frequencyPenalty: 0.65,
         presencePenalty: 0.45,
@@ -215,12 +221,13 @@ document.addEventListener('DOMContentLoaded', () => {
         maxMessageHistory: 30,
         memoryProvider: 'inherit',
         memoryModel: 'nvidia/nemotron-3-ultra-550b-a55b:free',
-        lastMemOpenRouterModel: 'nvidia/nemotron-3-ultra-550b-a55b:free',
-        lastMemDeepInfraModel: 'NousResearch/Hermes-3-Llama-3.1-70B',
+        lastMemOpenRouterModel: rawSet.lastMemOpenRouterModel || (memoryProvider === 'openrouter' ? memoryModel : 'nvidia/nemotron-3-ultra-550b-a55b:free'),
+        lastMemDeepInfraModel: rawSet.lastMemDeepInfraModel || (memoryProvider === 'deepinfra' ? memoryModel : 'NousResearch/Hermes-3-Llama-3.1-70B'),
         memoryBudget: 5000,
         openrouterKey: '',
         deepinfraKey: '',
-        ...(raw.settings || {})
+        customModels: [],
+        ...rawSet
       };
     },
 
@@ -532,6 +539,35 @@ document.addEventListener('DOMContentLoaded', () => {
     }, 3500);
   }
 
+  function updateSyncProgress(label, percent) {
+    const box = document.getElementById('sync-progress-box');
+    const labelEl = document.getElementById('sync-progress-label');
+    const percentEl = document.getElementById('sync-progress-percent');
+    const fillEl = document.getElementById('sync-progress-fill');
+
+    if (box && box.classList.contains('hidden')) {
+      box.classList.remove('hidden');
+    }
+
+    const cleanPercent = Math.min(100, Math.max(0, Math.round(percent)));
+    if (labelEl) {
+      if (cleanPercent === 100) {
+        labelEl.innerHTML = `<i class="fa-solid fa-circle-check" style="color: #00a884;"></i> ${label}`;
+      } else {
+        labelEl.innerHTML = `<i class="fa-solid fa-spinner fa-spin" style="color: var(--accent-green);"></i> ${label}`;
+      }
+    }
+    if (percentEl) percentEl.textContent = `${cleanPercent}%`;
+    if (fillEl) fillEl.style.width = `${cleanPercent}%`;
+  }
+
+  function hideSyncProgress(delay = 1800) {
+    setTimeout(() => {
+      const box = document.getElementById('sync-progress-box');
+      if (box) box.classList.add('hidden');
+    }, delay);
+  }
+
   // -------------------------------------------------------------
   // Multi-Device End-to-End Encrypted Sync Engine (Option 2)
   // Supports GitHub Gist API (Rate-Limit Free 100MB) & Relay Fallback
@@ -761,15 +797,18 @@ document.addEventListener('DOMContentLoaded', () => {
       );
     },
 
-    async encryptPayload(jsonObj, base64Key) {
+    async encryptPayload(jsonObj, base64Key, onProgress) {
+      onProgress?.('Initializing AES-256 encryption key...', 20);
       const cryptoKey = await this.importKey(base64Key);
       const iv = crypto.getRandomValues(new Uint8Array(12));
 
       // 1. Compress JSON
+      onProgress?.('Compressing database payload...', 35);
       const jsonStr = JSON.stringify(jsonObj);
       const compressedObj = await this.compressText(jsonStr);
 
       // 2. Encrypt compressed object
+      onProgress?.('Encrypting vault with AES-256-GCM...', 50);
       const encodedText = new TextEncoder().encode(JSON.stringify(compressedObj));
       const encryptedBuffer = await crypto.subtle.encrypt(
         { name: "AES-GCM", iv: iv },
@@ -785,20 +824,23 @@ document.addEventListener('DOMContentLoaded', () => {
       };
     },
 
-    async decryptPayload(encryptedObj, base64Key) {
+    async decryptPayload(encryptedObj, base64Key, onProgress) {
       if (!encryptedObj || !encryptedObj.iv || !encryptedObj.data) {
         throw new Error("Invalid encrypted cloud payload structure.");
       }
+      onProgress?.('Initializing decryption key...', 55);
       const cryptoKey = await this.importKey(base64Key);
       const iv = this.base64ToArrayBuffer(encryptedObj.iv);
       const ciphertext = this.base64ToArrayBuffer(encryptedObj.data);
 
+      onProgress?.('Decrypting payload with AES-256-GCM...', 70);
       const decryptedBuffer = await crypto.subtle.decrypt(
         { name: "AES-GCM", iv: iv },
         cryptoKey,
         ciphertext
       );
 
+      onProgress?.('Decompressing vault payload...', 85);
       const jsonText = new TextDecoder().decode(decryptedBuffer);
       const compressedObj = JSON.parse(jsonText);
       return await this.decompressPayload(compressedObj);
@@ -846,7 +888,7 @@ document.addEventListener('DOMContentLoaded', () => {
       return await res.json();
     },
 
-    async pushToCloud() {
+    async pushToCloud(onProgress) {
       let { syncId, syncKey, githubToken, gistId } = this.getSyncSettings();
       if (!syncId || !syncKey) {
         const newSession = await this.generateNewSession();
@@ -854,21 +896,25 @@ document.addEventListener('DOMContentLoaded', () => {
         syncKey = newSession.syncKey;
       }
 
+      onProgress?.('Preparing local database...', 10);
       const rawDB = LocalDB.getRaw();
-      const encryptedObj = await this.encryptPayload(rawDB, syncKey);
+      const encryptedObj = await this.encryptPayload(rawDB, syncKey, onProgress);
 
       // 1. If GitHub Gist API is configured (High-Speed & Rate-Limit Free!)
       if (githubToken) {
+        onProgress?.('Uploading encrypted vault to GitHub Gist...', 75);
         const gistData = await this.pushToGist(encryptedObj, githubToken, gistId);
         if (gistData && gistData.id && gistData.id !== gistId) {
           this.saveSyncSettings({ syncGistId: gistData.id });
         }
         const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         this.saveSyncSettings({ lastPushedAt: now });
+        onProgress?.('Vault push complete!', 100);
         return { success: true, timestamp: now, provider: 'GitHub Gist' };
       }
 
       // 2. Default Zero-Config Relay (with throttled chunking)
+      onProgress?.('Uploading encrypted vault to Cloud Relay...', 65);
       const serializedObj = JSON.stringify(encryptedObj);
       if (serializedObj.length > this.SAFE_CHUNK_SIZE) {
         const chunks = [];
@@ -879,6 +925,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const chunkBlobIds = [];
         for (let i = 0; i < chunks.length; i++) {
           if (i > 0) await new Promise(r => setTimeout(r, 150)); // Throttling delay to prevent burst 429 rate limit
+          const chunkPct = 65 + Math.round(30 * ((i + 1) / chunks.length));
+          onProgress?.(`Uploading chunk ${i + 1} of ${chunks.length}...`, chunkPct);
           const chunkId = await this.uploadSingleBlob(`${syncId}_c${i}`, {
             v: 2,
             type: 'chunk',
@@ -902,10 +950,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       this.saveSyncSettings({ lastPushedAt: now });
+      onProgress?.('Vault push complete!', 100);
       return { success: true, timestamp: now, provider: 'Relay' };
     },
 
-    async pullFromCloud() {
+    async pullFromCloud(onProgress) {
       const { syncId, syncKey, githubToken, gistId } = this.getSyncSettings();
       if (!syncId || !syncKey) {
         throw new Error("No active sync pairing found. Generate or scan a QR code first.");
@@ -915,16 +964,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // 1. If GitHub Gist API is configured
       if (githubToken && gistId) {
+        onProgress?.('Downloading vault from GitHub Gist...', 25);
         encryptedObj = await this.pullFromGist(githubToken, gistId);
       }
 
       // 2. Fallback Relay
       if (!encryptedObj) {
+        onProgress?.('Connecting to Cloud Relay vault...', 15);
         const remoteData = await this.fetchSingleBlob(syncId);
         if (remoteData && remoteData.type === 'chunk_index' && Array.isArray(remoteData.chunkIds)) {
           const chunkResults = [];
           for (let i = 0; i < remoteData.chunkIds.length; i++) {
             if (i > 0) await new Promise(r => setTimeout(r, 100));
+            const dlPct = 15 + Math.round(30 * ((i + 1) / remoteData.chunkIds.length));
+            onProgress?.(`Downloading chunk ${i + 1} of ${remoteData.chunkIds.length}...`, dlPct);
             const cData = await this.fetchSingleBlob(remoteData.chunkIds[i]);
             chunkResults.push(cData);
           }
@@ -936,16 +989,18 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       }
 
-      const decryptedData = await this.decryptPayload(encryptedObj, syncKey);
+      const decryptedData = await this.decryptPayload(encryptedObj, syncKey, onProgress);
+      onProgress?.('Restoring personas, chats & settings to IndexedDB...', 92);
       LocalDB.importAnyJson(decryptedData);
 
       const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       this.saveSyncSettings({ lastPulledAt: now });
 
+      onProgress?.('Vault pull complete!', 100);
       return { success: true, timestamp: now, count: decryptedData.personas?.length || 0 };
     },
 
-    async smartSync() {
+    async smartSync(onProgress) {
       let remoteDB = null;
       const { syncId, syncKey, githubToken, gistId } = this.getSyncSettings();
 
@@ -953,13 +1008,17 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
           let encryptedObj = null;
           if (githubToken && gistId) {
+            onProgress?.('Downloading remote vault from GitHub Gist...', 15);
             encryptedObj = await this.pullFromGist(githubToken, gistId);
           } else {
+            onProgress?.('Connecting to Cloud Relay vault...', 10);
             const remoteData = await this.fetchSingleBlob(syncId);
             if (remoteData && remoteData.type === 'chunk_index' && Array.isArray(remoteData.chunkIds)) {
               const chunkResults = [];
               for (let i = 0; i < remoteData.chunkIds.length; i++) {
                 if (i > 0) await new Promise(r => setTimeout(r, 100));
+                const dlPct = 10 + Math.round(20 * ((i + 1) / remoteData.chunkIds.length));
+                onProgress?.(`Downloading chunk ${i + 1} of ${remoteData.chunkIds.length}...`, dlPct);
                 const cData = await this.fetchSingleBlob(remoteData.chunkIds[i]);
                 chunkResults.push(cData);
               }
@@ -969,7 +1028,7 @@ document.addEventListener('DOMContentLoaded', () => {
               encryptedObj = remoteData;
             }
           }
-          remoteDB = await this.decryptPayload(encryptedObj, syncKey);
+          remoteDB = await this.decryptPayload(encryptedObj, syncKey, onProgress);
         } catch (e) {
           console.warn("[SYNC] Remote fetch error during smart sync:", e);
         }
@@ -978,8 +1037,10 @@ document.addEventListener('DOMContentLoaded', () => {
       const localDB = LocalDB.getRaw();
 
       if (!remoteDB) {
-        return await this.pushToCloud();
+        return await this.pushToCloud(onProgress);
       }
+
+      onProgress?.('Merging local & remote chats, settings & models...', 50);
 
       // Merge local and remote personas
       const mergedPersonasMap = new Map();
@@ -1007,9 +1068,14 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       // Merge settings (including API keys & model choices)
+      const localCustomModels = Array.isArray(localDB.settings?.customModels) ? localDB.settings.customModels : [];
+      const remoteCustomModels = Array.isArray(remoteDB.settings?.customModels) ? remoteDB.settings.customModels : [];
+      const mergedCustomModels = Array.from(new Set([...localCustomModels, ...remoteCustomModels]));
+
       const mergedSettings = {
+        ...(localDB.settings || {}),
         ...(remoteDB.settings || {}),
-        ...(localDB.settings || {})
+        customModels: mergedCustomModels
       };
 
       const mergedDB = {
@@ -1018,8 +1084,14 @@ document.addEventListener('DOMContentLoaded', () => {
         settings: mergedSettings
       };
 
+      onProgress?.('Saving merged vault locally...', 60);
       LocalDB.saveRaw(mergedDB);
-      return await this.pushToCloud();
+
+      onProgress?.('Uploading merged vault to cloud...', 70);
+      return await this.pushToCloud((label, pct) => {
+        const adjustedPct = 70 + Math.round(pct * 0.3);
+        onProgress?.(label, adjustedPct);
+      });
     },
 
     arrayBufferToBase64(buffer) {
@@ -1703,6 +1775,7 @@ ${recMsgsStr}`;
       reader.onload = (evt) => {
         try {
           const res = LocalDB.importAnyJson(evt.target.result);
+          loadSettingsIntoUI();
           loadPersonas();
           if (closeImportModal && importModal) hideModal(importModal);
           if (res.firstPersonaId) {
@@ -2003,13 +2076,16 @@ ${recMsgsStr}`;
   if (btnSyncPush) {
     btnSyncPush.addEventListener('click', async () => {
       btnSyncPush.disabled = true;
-      btnSyncPush.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Encrypting & Uploading to Gist...`;
+      btnSyncPush.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Encrypting & Uploading...`;
+      updateSyncProgress('Preparing push...', 5);
       try {
-        const res = await SyncEngine.pushToCloud();
+        const res = await SyncEngine.pushToCloud((label, pct) => updateSyncProgress(label, pct));
         showToast('All chats, API keys, models & settings pushed to Gist Vault!');
         updateSyncStatusUI();
+        hideSyncProgress(2000);
       } catch (err) {
         showToast(err.message, 'error');
+        hideSyncProgress(500);
       } finally {
         btnSyncPush.disabled = false;
         btnSyncPush.innerHTML = `<i class="fa-solid fa-cloud-arrow-up"></i> 📤 Push Data to Gist Vault`;
@@ -2021,9 +2097,10 @@ ${recMsgsStr}`;
   if (btnSyncPull) {
     btnSyncPull.addEventListener('click', async () => {
       btnSyncPull.disabled = true;
-      btnSyncPull.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Downloading & Decrypting Gist...`;
+      btnSyncPull.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Downloading & Decrypting...`;
+      updateSyncProgress('Preparing pull...', 5);
       try {
-        const res = await SyncEngine.pullFromCloud();
+        const res = await SyncEngine.pullFromCloud((label, pct) => updateSyncProgress(label, pct));
         loadPersonas();
         loadSettingsIntoUI();
         if (personas && personas.length > 0) {
@@ -2031,8 +2108,10 @@ ${recMsgsStr}`;
         }
         showToast(`Successfully pulled and restored ${res.count} persona(s) & settings from Gist!`);
         updateSyncStatusUI();
+        hideSyncProgress(2000);
       } catch (err) {
         showToast(err.message, 'error');
+        hideSyncProgress(500);
       } finally {
         btnSyncPull.disabled = false;
         btnSyncPull.innerHTML = `<i class="fa-solid fa-cloud-arrow-down"></i> 📥 Pull Data from Gist Vault`;
@@ -2045,8 +2124,9 @@ ${recMsgsStr}`;
     btnSyncSmart.addEventListener('click', async () => {
       btnSyncSmart.disabled = true;
       btnSyncSmart.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Merging Local & Gist...`;
+      updateSyncProgress('Preparing smart sync...', 5);
       try {
-        const res = await SyncEngine.smartSync();
+        const res = await SyncEngine.smartSync((label, pct) => updateSyncProgress(label, pct));
         loadPersonas();
         loadSettingsIntoUI();
         if (personas && personas.length > 0) {
@@ -2054,8 +2134,10 @@ ${recMsgsStr}`;
         }
         showToast('Smart sync complete! Local & Gist vault merged and updated.');
         updateSyncStatusUI();
+        hideSyncProgress(2000);
       } catch (err) {
         showToast(err.message, 'error');
+        hideSyncProgress(500);
       } finally {
         btnSyncSmart.disabled = false;
         btnSyncSmart.innerHTML = `<i class="fa-solid fa-arrows-rotate"></i> 🔄 Smart Sync (Merge Local & Gist)`;
@@ -4145,6 +4227,7 @@ ${recMsgsStr}`;
   // -------------------------------------------------------------
   async function init() {
     await LocalDB.init();
+    loadSettingsIntoUI();
     loadPersonas();
   }
 
