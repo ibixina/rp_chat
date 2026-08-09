@@ -3955,10 +3955,15 @@ ${recMsgsStr}`;
         scrollToBottomIfNearBottom();
       }
     } finally {
+      const state = activeStreamingState[personaId];
+      if (state && state.bubbleEl) {
+        state.bubbleEl.classList.remove('streaming-ghost');
+      }
       delete activeStreamingState[personaId];
       generatingPersonas[personaId] = false;
       removeTypingIndicator();
       if (activePersonaId === personaId) {
+        renderCurrentMessageBatch();
         updateHeaderStatus(personaId);
         scrollToBottomIfNearBottom();
       }

@@ -577,10 +577,7 @@ body, html {
 
 /* Ephemeral / Ghost Streaming Message Bubble */
 .message-bubble.streaming-ghost {
-  opacity: 0.88;
-  border: 1px dashed rgba(0, 168, 132, 0.4);
-  transition: opacity 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
-  box-shadow: 0 0 10px rgba(0, 168, 132, 0.15);
+  opacity: 0.95;
 }
 
 .message-bubble.streaming-ghost .message-actions-toolbar {
