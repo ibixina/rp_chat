@@ -3364,8 +3364,9 @@ ${recMsgsStr}`;
       activeMessagesList = LocalDB.getMessages(activePersonaId) || [];
     }
 
-    const oldScrollHeight = chatFeedEl.scrollHeight;
-    const oldScrollTop = chatFeedEl.scrollTop;
+    const wasNearBottom = isNearBottom(150);
+    const oldScrollHeight = chatFeedEl ? chatFeedEl.scrollHeight : 0;
+    const oldScrollTop = chatFeedEl ? chatFeedEl.scrollTop : 0;
 
     chatFeedEl.innerHTML = '';
 
@@ -3407,6 +3408,10 @@ ${recMsgsStr}`;
     if (keepScrollPosition) {
       const newScrollHeight = chatFeedEl.scrollHeight;
       chatFeedEl.scrollTop = oldScrollTop + (newScrollHeight - oldScrollHeight);
+    } else if (wasNearBottom) {
+      scrollToBottom();
+    } else {
+      chatFeedEl.scrollTop = oldScrollTop;
     }
   }
 
@@ -3443,7 +3448,7 @@ ${recMsgsStr}`;
     });
   }
 
-  function isNearBottom(threshold = 120) {
+  function isNearBottom(threshold = 150) {
     if (!chatFeedEl) return true;
     const distanceToBottom = chatFeedEl.scrollHeight - chatFeedEl.scrollTop - chatFeedEl.clientHeight;
     return distanceToBottom <= threshold;
@@ -3452,14 +3457,17 @@ ${recMsgsStr}`;
   function scrollToBottom() {
     if (chatFeedEl) {
       chatFeedEl.scrollTop = chatFeedEl.scrollHeight;
+      requestAnimationFrame(() => {
+        if (chatFeedEl) chatFeedEl.scrollTop = chatFeedEl.scrollHeight;
+      });
     }
     updateScrollBottomBtn();
   }
 
-  function scrollToBottomIfNearBottom(threshold = 120) {
+  function scrollToBottomIfNearBottom(threshold = 150) {
     if (!chatFeedEl) return;
     if (isNearBottom(threshold)) {
-      chatFeedEl.scrollTop = chatFeedEl.scrollHeight;
+      scrollToBottom();
     }
     updateScrollBottomBtn();
   }
@@ -4007,7 +4015,6 @@ ${recMsgsStr}`;
       if (activePersonaId === personaId) {
         renderCurrentMessageBatch();
         updateHeaderStatus(personaId);
-        scrollToBottomIfNearBottom();
       }
       renderContactList(LocalDB.getPersonas());
     }
