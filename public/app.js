@@ -561,11 +561,55 @@ document.addEventListener('DOMContentLoaded', () => {
     if (fillEl) fillEl.style.width = `${cleanPercent}%`;
   }
 
-  function hideSyncProgress(delay = 1800) {
-    setTimeout(() => {
-      const box = document.getElementById('sync-progress-box');
-      if (box) box.classList.add('hidden');
-    }, delay);
+  function formatBytes(bytes) {
+    if (bytes === 0 || !bytes || isNaN(bytes)) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+  }
+
+  function requestWithProgress({ method, url, headers = {}, body = null, onUploadProgress, onDownloadProgress }) {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open(method, url, true);
+
+      for (const key in headers) {
+        xhr.setRequestHeader(key, headers[key]);
+      }
+
+      if (xhr.upload && onUploadProgress) {
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable && e.total > 0) {
+            onUploadProgress(e.loaded, e.total);
+          }
+        };
+      }
+
+      if (onDownloadProgress) {
+        xhr.onprogress = (e) => {
+          if (e.lengthComputable && e.total > 0) {
+            onDownloadProgress(e.loaded, e.total);
+          }
+        };
+      }
+
+      xhr.onload = () => {
+        resolve({
+          ok: xhr.status >= 200 && xhr.status < 300,
+          status: xhr.status,
+          statusText: xhr.statusText,
+          responseText: xhr.responseText,
+          getResponseHeader: (name) => xhr.getResponseHeader(name),
+          getAllResponseHeaders: () => xhr.getAllResponseHeaders()
+        });
+      };
+
+      xhr.onerror = () => reject(new Error(`Network connection error accessing sync endpoint.`));
+      xhr.ontimeout = () => reject(new Error(`Sync request timed out.`));
+
+      xhr.send(body);
+    });
   }
 
   // -------------------------------------------------------------
@@ -599,7 +643,7 @@ document.addEventListener('DOMContentLoaded', () => {
       LocalDB.saveSettings(updates);
     },
 
-    async pushToGist(encryptedObj, token, gistId = '') {
+    async pushToGist(encryptedObj, token, gistId = '', onProgress) {
       const payload = {
         description: "Persona Chat App E2EE Vault",
         public: false,
@@ -610,51 +654,55 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       };
 
-      if (gistId) {
-        const res = await fetch(`https://api.github.com/gists/${gistId}`, {
-          method: 'PATCH',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
-            'Accept': 'application/vnd.github.v3+json'
-          },
-          body: JSON.stringify(payload)
-        });
-        if (res.status === 404) {
-          return await this.pushToGist(encryptedObj, token, '');
+      const bodyStr = JSON.stringify(payload);
+      const url = gistId ? `https://api.github.com/gists/${gistId}` : 'https://api.github.com/gists';
+      const method = gistId ? 'PATCH' : 'POST';
+
+      onProgress?.('Uploading vault to GitHub Gist...', 55);
+
+      const res = await requestWithProgress({
+        method: method,
+        url: url,
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          'Accept': 'application/vnd.github.v3+json'
+        },
+        body: bodyStr,
+        onUploadProgress: (loaded, total) => {
+          const pct = 55 + Math.round(40 * (loaded / total));
+          onProgress?.(`Uploading vault to GitHub Gist (${formatBytes(loaded)} / ${formatBytes(total)})...`, pct);
         }
-        if (!res.ok) {
-          const errText = await res.text();
-          throw new Error(`GitHub Gist Error (${res.status}): ${errText}`);
-        }
-        return await res.json();
-      } else {
-        const res = await fetch('https://api.github.com/gists', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
-            'Accept': 'application/vnd.github.v3+json'
-          },
-          body: JSON.stringify(payload)
-        });
-        if (!res.ok) {
-          const errText = await res.text();
-          throw new Error(`GitHub Gist Error (${res.status}): ${errText}`);
-        }
-        return await res.json();
+      });
+
+      if (res.status === 404 && gistId) {
+        return await this.pushToGist(encryptedObj, token, '', onProgress);
       }
+      if (!res.ok) {
+        throw new Error(`GitHub Gist Error (${res.status}): ${res.responseText}`);
+      }
+      return JSON.parse(res.responseText);
     },
 
-    async pullFromGist(token, gistId) {
+    async pullFromGist(token, gistId, onProgress) {
       const headers = { 'Accept': 'application/vnd.github.v3+json' };
       if (token) headers['Authorization'] = `Bearer ${token}`;
 
-      const res = await fetch(`https://api.github.com/gists/${gistId}`, { headers });
+      onProgress?.('Fetching Gist vault metadata...', 15);
+      const res = await requestWithProgress({
+        method: 'GET',
+        url: `https://api.github.com/gists/${gistId}`,
+        headers: headers,
+        onDownloadProgress: (loaded, total) => {
+          const pct = 15 + Math.round(15 * (loaded / total));
+          onProgress?.(`Downloading Gist metadata (${formatBytes(loaded)} / ${formatBytes(total)})...`, pct);
+        }
+      });
+
       if (!res.ok) {
         throw new Error(`GitHub Gist Pull Error (${res.status}). Verify Gist ID and PAT token.`);
       }
-      const data = await res.json();
+      const data = JSON.parse(res.responseText);
       const file = data.files['persona_sync_vault.enc'];
       if (!file) {
         throw new Error("Gist found but does not contain persona_sync_vault.enc file.");
@@ -662,12 +710,19 @@ document.addEventListener('DOMContentLoaded', () => {
 
       let contentStr = '';
       if (file.truncated || !file.content) {
-        // Fetch directly from file.raw_url without custom headers (CORS safe)
-        const rawRes = await fetch(file.raw_url);
+        onProgress?.('Downloading raw vault payload...', 30);
+        const rawRes = await requestWithProgress({
+          method: 'GET',
+          url: file.raw_url,
+          onDownloadProgress: (loaded, total) => {
+            const pct = 30 + Math.round(25 * (loaded / total));
+            onProgress?.(`Downloading vault payload (${formatBytes(loaded)} / ${formatBytes(total)})...`, pct);
+          }
+        });
         if (!rawRes.ok) {
           throw new Error(`Failed to fetch raw Gist content (HTTP ${rawRes.status}).`);
         }
-        contentStr = await rawRes.text();
+        contentStr = rawRes.responseText;
       } else {
         contentStr = file.content;
       }
@@ -676,6 +731,7 @@ document.addEventListener('DOMContentLoaded', () => {
         throw new Error("Could not retrieve vault file content from GitHub Gist.");
       }
 
+      onProgress?.(`Vault download complete (${formatBytes(contentStr.length)})`, 55);
       return JSON.parse(contentStr);
     },
 
@@ -846,22 +902,34 @@ document.addEventListener('DOMContentLoaded', () => {
       return await this.decompressPayload(compressedObj);
     },
 
-    async uploadSingleBlob(blobId, payload) {
+    async uploadSingleBlob(blobId, payload, onProgress, startPct = 60, endPct = 95) {
       const url = `${this.DEFAULT_RELAY}/${blobId}`;
-      let res = await fetch(url, {
+      const bodyStr = JSON.stringify(payload);
+
+      let res = await requestWithProgress({
         method: 'PUT',
+        url: url,
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        body: bodyStr,
+        onUploadProgress: (loaded, total) => {
+          const pct = startPct + Math.round((endPct - startPct) * (loaded / total));
+          onProgress?.(`Uploading payload (${formatBytes(loaded)} / ${formatBytes(total)})...`, pct);
+        }
       });
 
       if (res.status === 404) {
-        const createRes = await fetch(this.DEFAULT_RELAY, {
+        const createRes = await requestWithProgress({
           method: 'POST',
+          url: this.DEFAULT_RELAY,
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
+          body: bodyStr,
+          onUploadProgress: (loaded, total) => {
+            const pct = startPct + Math.round((endPct - startPct) * (loaded / total));
+            onProgress?.(`Uploading payload (${formatBytes(loaded)} / ${formatBytes(total)})...`, pct);
+          }
         });
         if (createRes.ok) {
-          const loc = createRes.headers.get('location') || createRes.headers.get('Location');
+          const loc = createRes.getResponseHeader('location') || createRes.getResponseHeader('Location');
           if (loc) return loc.split('/').pop();
         }
       }
@@ -876,16 +944,24 @@ document.addEventListener('DOMContentLoaded', () => {
       return blobId;
     },
 
-    async fetchSingleBlob(blobId) {
+    async fetchSingleBlob(blobId, onProgress, startPct = 10, endPct = 50) {
       const url = `${this.DEFAULT_RELAY}/${blobId}`;
-      const res = await fetch(url);
+      const res = await requestWithProgress({
+        method: 'GET',
+        url: url,
+        onDownloadProgress: (loaded, total) => {
+          const pct = startPct + Math.round((endPct - startPct) * (loaded / total));
+          onProgress?.(`Downloading vault (${formatBytes(loaded)} / ${formatBytes(total)})...`, pct);
+        }
+      });
+
       if (res.status === 429) {
         throw new Error("Cloud relay rate limit reached (HTTP 429). Please wait a moment or connect GitHub Gist API in Vault Settings.");
       }
       if (!res.ok) {
         throw new Error(`Cloud vault not found (HTTP ${res.status}).`);
       }
-      return await res.json();
+      return JSON.parse(res.responseText);
     },
 
     async pushToCloud(onProgress) {
@@ -896,14 +972,13 @@ document.addEventListener('DOMContentLoaded', () => {
         syncKey = newSession.syncKey;
       }
 
-      onProgress?.('Preparing local database...', 10);
+      onProgress?.('Preparing local database...', 5);
       const rawDB = LocalDB.getRaw();
       const encryptedObj = await this.encryptPayload(rawDB, syncKey, onProgress);
 
       // 1. If GitHub Gist API is configured (High-Speed & Rate-Limit Free!)
       if (githubToken) {
-        onProgress?.('Uploading encrypted vault to GitHub Gist...', 75);
-        const gistData = await this.pushToGist(encryptedObj, githubToken, gistId);
+        const gistData = await this.pushToGist(encryptedObj, githubToken, gistId, onProgress);
         if (gistData && gistData.id && gistData.id !== gistId) {
           this.saveSyncSettings({ syncGistId: gistData.id });
         }
@@ -914,7 +989,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       // 2. Default Zero-Config Relay (with throttled chunking)
-      onProgress?.('Uploading encrypted vault to Cloud Relay...', 65);
+      onProgress?.('Preparing payload for Cloud Relay...', 55);
       const serializedObj = JSON.stringify(encryptedObj);
       if (serializedObj.length > this.SAFE_CHUNK_SIZE) {
         const chunks = [];
@@ -925,14 +1000,16 @@ document.addEventListener('DOMContentLoaded', () => {
         const chunkBlobIds = [];
         for (let i = 0; i < chunks.length; i++) {
           if (i > 0) await new Promise(r => setTimeout(r, 150)); // Throttling delay to prevent burst 429 rate limit
-          const chunkPct = 65 + Math.round(30 * ((i + 1) / chunks.length));
-          onProgress?.(`Uploading chunk ${i + 1} of ${chunks.length}...`, chunkPct);
+          const startP = 55 + Math.round(40 * (i / chunks.length));
+          const endP = 55 + Math.round(40 * ((i + 1) / chunks.length));
           const chunkId = await this.uploadSingleBlob(`${syncId}_c${i}`, {
             v: 2,
             type: 'chunk',
             index: i,
             data: chunks[i]
-          });
+          }, (lbl, pct) => {
+            onProgress?.(`Uploading chunk ${i + 1}/${chunks.length} (${lbl})`, pct);
+          }, startP, endP);
           chunkBlobIds.push(chunkId);
         }
 
@@ -945,7 +1022,7 @@ document.addEventListener('DOMContentLoaded', () => {
           updatedAt: new Date().toISOString()
         });
       } else {
-        await this.uploadSingleBlob(syncId, encryptedObj);
+        await this.uploadSingleBlob(syncId, encryptedObj, onProgress, 55, 95);
       }
 
       const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -964,21 +1041,22 @@ document.addEventListener('DOMContentLoaded', () => {
 
       // 1. If GitHub Gist API is configured
       if (githubToken && gistId) {
-        onProgress?.('Downloading vault from GitHub Gist...', 25);
-        encryptedObj = await this.pullFromGist(githubToken, gistId);
+        encryptedObj = await this.pullFromGist(githubToken, gistId, onProgress);
       }
 
       // 2. Fallback Relay
       if (!encryptedObj) {
         onProgress?.('Connecting to Cloud Relay vault...', 15);
-        const remoteData = await this.fetchSingleBlob(syncId);
+        const remoteData = await this.fetchSingleBlob(syncId, onProgress, 15, 30);
         if (remoteData && remoteData.type === 'chunk_index' && Array.isArray(remoteData.chunkIds)) {
           const chunkResults = [];
           for (let i = 0; i < remoteData.chunkIds.length; i++) {
             if (i > 0) await new Promise(r => setTimeout(r, 100));
-            const dlPct = 15 + Math.round(30 * ((i + 1) / remoteData.chunkIds.length));
-            onProgress?.(`Downloading chunk ${i + 1} of ${remoteData.chunkIds.length}...`, dlPct);
-            const cData = await this.fetchSingleBlob(remoteData.chunkIds[i]);
+            const startP = 15 + Math.round(35 * (i / remoteData.chunkIds.length));
+            const endP = 15 + Math.round(35 * ((i + 1) / remoteData.chunkIds.length));
+            const cData = await this.fetchSingleBlob(remoteData.chunkIds[i], (lbl, pct) => {
+              onProgress?.(`Downloading chunk ${i + 1}/${remoteData.chunkIds.length} (${lbl})`, pct);
+            }, startP, endP);
             chunkResults.push(cData);
           }
           chunkResults.sort((a, b) => (a.index || 0) - (b.index || 0));
@@ -1008,18 +1086,23 @@ document.addEventListener('DOMContentLoaded', () => {
         try {
           let encryptedObj = null;
           if (githubToken && gistId) {
-            onProgress?.('Downloading remote vault from GitHub Gist...', 15);
-            encryptedObj = await this.pullFromGist(githubToken, gistId);
+            encryptedObj = await this.pullFromGist(githubToken, gistId, (lbl, pct) => {
+              onProgress?.(lbl, Math.round(pct * 0.4));
+            });
           } else {
             onProgress?.('Connecting to Cloud Relay vault...', 10);
-            const remoteData = await this.fetchSingleBlob(syncId);
+            const remoteData = await this.fetchSingleBlob(syncId, (lbl, pct) => {
+              onProgress?.(lbl, Math.round(pct * 0.3));
+            }, 10, 30);
             if (remoteData && remoteData.type === 'chunk_index' && Array.isArray(remoteData.chunkIds)) {
               const chunkResults = [];
               for (let i = 0; i < remoteData.chunkIds.length; i++) {
                 if (i > 0) await new Promise(r => setTimeout(r, 100));
-                const dlPct = 10 + Math.round(20 * ((i + 1) / remoteData.chunkIds.length));
-                onProgress?.(`Downloading chunk ${i + 1} of ${remoteData.chunkIds.length}...`, dlPct);
-                const cData = await this.fetchSingleBlob(remoteData.chunkIds[i]);
+                const startP = 10 + Math.round(25 * (i / remoteData.chunkIds.length));
+                const endP = 10 + Math.round(25 * ((i + 1) / remoteData.chunkIds.length));
+                const cData = await this.fetchSingleBlob(remoteData.chunkIds[i], (lbl, pct) => {
+                  onProgress?.(`Downloading chunk ${i + 1}/${remoteData.chunkIds.length} (${lbl})`, pct);
+                }, startP, endP);
                 chunkResults.push(cData);
               }
               chunkResults.sort((a, b) => (a.index || 0) - (b.index || 0));
@@ -1028,7 +1111,9 @@ document.addEventListener('DOMContentLoaded', () => {
               encryptedObj = remoteData;
             }
           }
-          remoteDB = await this.decryptPayload(encryptedObj, syncKey, onProgress);
+          remoteDB = await this.decryptPayload(encryptedObj, syncKey, (lbl, pct) => {
+            onProgress?.(lbl, 35 + Math.round(pct * 0.15));
+          });
         } catch (e) {
           console.warn("[SYNC] Remote fetch error during smart sync:", e);
         }
@@ -1040,7 +1125,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return await this.pushToCloud(onProgress);
       }
 
-      onProgress?.('Merging local & remote chats, settings & models...', 50);
+      onProgress?.('Merging local & remote chats, settings & models...', 52);
 
       // Merge local and remote personas
       const mergedPersonasMap = new Map();
@@ -1087,9 +1172,8 @@ document.addEventListener('DOMContentLoaded', () => {
       onProgress?.('Saving merged vault locally...', 60);
       LocalDB.saveRaw(mergedDB);
 
-      onProgress?.('Uploading merged vault to cloud...', 70);
       return await this.pushToCloud((label, pct) => {
-        const adjustedPct = 70 + Math.round(pct * 0.3);
+        const adjustedPct = 60 + Math.round(pct * 0.4);
         onProgress?.(label, adjustedPct);
       });
     },
