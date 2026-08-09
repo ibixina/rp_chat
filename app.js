@@ -209,6 +209,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const memoryModel = rawSet.memoryModel || 'nvidia/nemotron-3-ultra-550b-a55b:free';
 
       return {
+        theme: 'whatsapp-dark',
         provider: 'openrouter',
         model: 'sao10k/l3.3-euryale-70b',
         lastOpenRouterModel: rawSet.lastOpenRouterModel || (provider === 'openrouter' ? model : 'sao10k/l3.3-euryale-70b'),
@@ -2794,7 +2795,49 @@ ${recMsgsStr}`;
       const currentMemActiveModel = settingsMemProviderModels[memProv] || (memProv === 'deepinfra' ? 'NousResearch/Hermes-3-Llama-3.1-70B' : 'nvidia/nemotron-3-ultra-550b-a55b:free');
       setMemModelUI(currentMemActiveModel);
     }
+
+    applyTheme(settings.theme || 'whatsapp-dark');
   }
+
+  // Theme Manager & Color Palette Selector
+  const THEME_BG_COLORS = {
+    'whatsapp-dark': '#0b141a',
+    'cyberpunk': '#0b0914',
+    'nordic-frost': '#0f172a',
+    'dracula': '#181825',
+    'tokyo-night': '#16161e',
+    'oled-black': '#000000',
+    'sunset-rose': '#1c1317',
+    'whatsapp-light': '#f0f2f5'
+  };
+
+  function applyTheme(themeId = 'whatsapp-dark') {
+    const validTheme = THEME_BG_COLORS[themeId] ? themeId : 'whatsapp-dark';
+    document.documentElement.setAttribute('data-theme', validTheme);
+
+    const metaThemeColor = document.querySelector('meta[name="theme-color"]');
+    if (metaThemeColor) {
+      metaThemeColor.setAttribute('content', THEME_BG_COLORS[validTheme]);
+    }
+
+    document.querySelectorAll('.theme-card').forEach(card => {
+      const cardThemeId = card.getAttribute('data-theme-id');
+      if (cardThemeId === validTheme) {
+        card.classList.add('active');
+        card.style.border = '2px solid var(--accent-green)';
+      } else {
+        card.classList.remove('active');
+        card.style.border = '1px solid var(--border-color)';
+      }
+    });
+  }
+
+  document.querySelectorAll('.theme-card').forEach(card => {
+    card.addEventListener('click', () => {
+      const themeId = card.getAttribute('data-theme-id');
+      applyTheme(themeId);
+    });
+  });
 
   // Provider Selection Event Listeners in Settings
   const cardOpenRouter = document.getElementById('card-openrouter');
@@ -3042,7 +3085,11 @@ ${recMsgsStr}`;
       if (model && !BUILTIN_PRESET_VALUES.has(model)) saveCustomModel(model);
       if (memoryModel && memoryProvider !== 'inherit' && !BUILTIN_PRESET_VALUES.has(memoryModel)) saveCustomModel(memoryModel);
 
+      const activeThemeCard = document.querySelector('.theme-card.active');
+      const theme = activeThemeCard?.getAttribute('data-theme-id') || 'whatsapp-dark';
+
       LocalDB.saveSettings({
+        theme,
         openrouterKey,
         deepinfraKey,
         provider,
@@ -4318,6 +4365,8 @@ ${recMsgsStr}`;
   // -------------------------------------------------------------
   async function init() {
     await LocalDB.init();
+    const settings = LocalDB.getSettings();
+    applyTheme(settings.theme || 'whatsapp-dark');
     loadSettingsIntoUI();
     loadPersonas();
   }

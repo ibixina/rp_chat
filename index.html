@@ -451,6 +451,86 @@
           </div>
         </div>
 
+        <!-- Theme & Color Palette Selection -->
+        <div style="border-top: 1px solid var(--border-color); margin: 18px 0 14px 0; padding-top: 14px;">
+          <label style="font-weight: 600; font-size: 13px; color: var(--accent-green); display: flex; align-items: center; gap: 6px; margin-bottom: 10px;">
+            <i class="fa-solid fa-palette"></i> Theme & Color Palette
+          </label>
+          <div class="theme-options-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(115px, 1fr)); gap: 8px;">
+            <div class="theme-card active" data-theme-id="whatsapp-dark" style="padding: 8px; border: 2px solid var(--accent-green); border-radius: 8px; background: #0b141a; cursor: pointer; text-align: center; transition: transform 0.15s ease;">
+              <div style="display: flex; gap: 4px; justify-content: center; margin-bottom: 6px;">
+                <span style="width: 12px; height: 12px; border-radius: 50%; background: #0b141a; border: 1px solid #333;"></span>
+                <span style="width: 12px; height: 12px; border-radius: 50%; background: #005c4b;"></span>
+                <span style="width: 12px; height: 12px; border-radius: 50%; background: #00a884;"></span>
+              </div>
+              <div style="font-size: 11px; font-weight: 600; color: #e9edef;">WhatsApp Dark</div>
+            </div>
+
+            <div class="theme-card" data-theme-id="cyberpunk" style="padding: 8px; border: 1px solid var(--border-color); border-radius: 8px; background: #0b0914; cursor: pointer; text-align: center; transition: transform 0.15s ease;">
+              <div style="display: flex; gap: 4px; justify-content: center; margin-bottom: 6px;">
+                <span style="width: 12px; height: 12px; border-radius: 50%; background: #0b0914; border: 1px solid #333;"></span>
+                <span style="width: 12px; height: 12px; border-radius: 50%; background: #581c87;"></span>
+                <span style="width: 12px; height: 12px; border-radius: 50%; background: #00f0ff;"></span>
+              </div>
+              <div style="font-size: 11px; font-weight: 600; color: #f5f3ff;">Cyberpunk</div>
+            </div>
+
+            <div class="theme-card" data-theme-id="nordic-frost" style="padding: 8px; border: 1px solid var(--border-color); border-radius: 8px; background: #0f172a; cursor: pointer; text-align: center; transition: transform 0.15s ease;">
+              <div style="display: flex; gap: 4px; justify-content: center; margin-bottom: 6px;">
+                <span style="width: 12px; height: 12px; border-radius: 50%; background: #0f172a; border: 1px solid #333;"></span>
+                <span style="width: 12px; height: 12px; border-radius: 50%; background: #0369a1;"></span>
+                <span style="width: 12px; height: 12px; border-radius: 50%; background: #38bdf8;"></span>
+              </div>
+              <div style="font-size: 11px; font-weight: 600; color: #f8fafc;">Nordic Frost</div>
+            </div>
+
+            <div class="theme-card" data-theme-id="dracula" style="padding: 8px; border: 1px solid var(--border-color); border-radius: 8px; background: #181825; cursor: pointer; text-align: center; transition: transform 0.15s ease;">
+              <div style="display: flex; gap: 4px; justify-content: center; margin-bottom: 6px;">
+                <span style="width: 12px; height: 12px; border-radius: 50%; background: #181825; border: 1px solid #333;"></span>
+                <span style="width: 12px; height: 12px; border-radius: 50%; background: #2b5b84;"></span>
+                <span style="width: 12px; height: 12px; border-radius: 50%; background: #f5c2e7;"></span>
+              </div>
+              <div style="font-size: 11px; font-weight: 600; color: #cdd6f4;">Dracula</div>
+            </div>
+
+            <div class="theme-card" data-theme-id="tokyo-night" style="padding: 8px; border: 1px solid var(--border-color); border-radius: 8px; background: #16161e; cursor: pointer; text-align: center; transition: transform 0.15s ease;">
+              <div style="display: flex; gap: 4px; justify-content: center; margin-bottom: 6px;">
+                <span style="width: 12px; height: 12px; border-radius: 50%; background: #16161e; border: 1px solid #333;"></span>
+                <span style="width: 12px; height: 12px; border-radius: 50%; background: #3b4261;"></span>
+                <span style="width: 12px; height: 12px; border-radius: 50%; background: #7dcfff;"></span>
+              </div>
+              <div style="font-size: 11px; font-weight: 600; color: #c0caf5;">Tokyo Night</div>
+            </div>
+
+            <div class="theme-card" data-theme-id="oled-black" style="padding: 8px; border: 1px solid var(--border-color); border-radius: 8px; background: #000000; cursor: pointer; text-align: center; transition: transform 0.15s ease;">
+              <div style="display: flex; gap: 4px; justify-content: center; margin-bottom: 6px;">
+                <span style="width: 12px; height: 12px; border-radius: 50%; background: #000000; border: 1px solid #333;"></span>
+                <span style="width: 12px; height: 12px; border-radius: 50%; background: #047857;"></span>
+                <span style="width: 12px; height: 12px; border-radius: 50%; background: #10b981;"></span>
+              </div>
+              <div style="font-size: 11px; font-weight: 600; color: #ffffff;">OLED Black</div>
+            </div>
+
+            <div class="theme-card" data-theme-id="sunset-rose" style="padding: 8px; border: 1px solid var(--border-color); border-radius: 8px; background: #1c1317; cursor: pointer; text-align: center; transition: transform 0.15s ease;">
+              <div style="display: flex; gap: 4px; justify-content: center; margin-bottom: 6px;">
+                <span style="width: 12px; height: 12px; border-radius: 50%; background: #1c1317; border: 1px solid #333;"></span>
+                <span style="width: 12px; height: 12px; border-radius: 50%; background: #be123c;"></span>
+                <span style="width: 12px; height: 12px; border-radius: 50%; background: #fb7185;"></span>
+              </div>
+              <div style="font-size: 11px; font-weight: 600; color: #fff1f2;">Sunset Rose</div>
+            </div>
+
+            <div class="theme-card" data-theme-id="whatsapp-light" style="padding: 8px; border: 1px solid var(--border-color); border-radius: 8px; background: #f0f2f5; cursor: pointer; text-align: center; transition: transform 0.15s ease;">
+              <div style="display: flex; gap: 4px; justify-content: center; margin-bottom: 6px;">
+                <span style="width: 12px; height: 12px; border-radius: 50%; background: #e5ddd5; border: 1px solid #ccc;"></span>
+                <span style="width: 12px; height: 12px; border-radius: 50%; background: #d9fdd3; border: 1px solid #ccc;"></span>
+                <span style="width: 12px; height: 12px; border-radius: 50%; background: #00a884;"></span>
+              </div>
+              <div style="font-size: 11px; font-weight: 600; color: #111b21;">WhatsApp Light</div>
+            </div>
+          </div>
+        </div>
+
         <!-- Data Backup & Restore section -->
         <div style="border-top: 1px solid var(--border-color); margin: 18px 0 6px 0; padding-top: 14px;">
           <label style="font-weight: 600; font-size: 13px; color: var(--accent-green); display: flex; align-items: center; gap: 6px; margin-bottom: 10px;">

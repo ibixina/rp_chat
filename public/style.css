@@ -18,6 +18,115 @@
   --font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
 }
 
+/* ------------------------------------------------------------- */
+/* Multi-Theme Palette Overrides                                 */
+/* ------------------------------------------------------------- */
+[data-theme="cyberpunk"] {
+  --bg-app: #0b0914;
+  --bg-sidebar: #120e24;
+  --bg-header: #1a1435;
+  --bg-chat: #0b0914;
+  --bg-input: #271e4d;
+  --border-color: #2d2359;
+  --bubble-user: #581c87;
+  --bubble-persona: #1a1435;
+  --text-main: #f5f3ff;
+  --text-muted: #a78bfa;
+  --accent-green: #00f0ff;
+  --accent-green-hover: #00b8cc;
+}
+
+[data-theme="nordic-frost"] {
+  --bg-app: #0f172a;
+  --bg-sidebar: #1e293b;
+  --bg-header: #334155;
+  --bg-chat: #0f172a;
+  --bg-input: #334155;
+  --border-color: #1e293b;
+  --bubble-user: #0369a1;
+  --bubble-persona: #1e293b;
+  --text-main: #f8fafc;
+  --text-muted: #94a3b8;
+  --accent-green: #38bdf8;
+  --accent-green-hover: #0284c7;
+}
+
+[data-theme="dracula"] {
+  --bg-app: #181825;
+  --bg-sidebar: #1e1e2e;
+  --bg-header: #313244;
+  --bg-chat: #181825;
+  --bg-input: #45475a;
+  --border-color: #313244;
+  --bubble-user: #2b5b84;
+  --bubble-persona: #313244;
+  --text-main: #cdd6f4;
+  --text-muted: #a6adc8;
+  --accent-green: #f5c2e7;
+  --accent-green-hover: #cba6f7;
+}
+
+[data-theme="tokyo-night"] {
+  --bg-app: #16161e;
+  --bg-sidebar: #1a1b26;
+  --bg-header: #24283b;
+  --bg-chat: #16161e;
+  --bg-input: #2f354f;
+  --border-color: #24283b;
+  --bubble-user: #3b4261;
+  --bubble-persona: #24283b;
+  --text-main: #c0caf5;
+  --text-muted: #7a88cf;
+  --accent-green: #7dcfff;
+  --accent-green-hover: #2ac3de;
+}
+
+[data-theme="oled-black"] {
+  --bg-app: #000000;
+  --bg-sidebar: #090909;
+  --bg-header: #161616;
+  --bg-chat: #000000;
+  --bg-input: #222222;
+  --border-color: #1c1c1c;
+  --bubble-user: #047857;
+  --bubble-persona: #161616;
+  --text-main: #ffffff;
+  --text-muted: #888888;
+  --accent-green: #10b981;
+  --accent-green-hover: #059669;
+}
+
+[data-theme="sunset-rose"] {
+  --bg-app: #1c1317;
+  --bg-sidebar: #261820;
+  --bg-header: #3b2230;
+  --bg-chat: #1c1317;
+  --bg-input: #4a2c3d;
+  --border-color: #3b2230;
+  --bubble-user: #be123c;
+  --bubble-persona: #3b2230;
+  --text-main: #fff1f2;
+  --text-muted: #fda4af;
+  --accent-green: #fb7185;
+  --accent-green-hover: #f43f5e;
+}
+
+[data-theme="whatsapp-light"] {
+  --bg-app: #e5ddd5;
+  --bg-sidebar: #ffffff;
+  --bg-header: #f0f2f5;
+  --bg-chat: #efeae2;
+  --bg-input: #ffffff;
+  --border-color: #d1d7db;
+  --bubble-user: #d9fdd3;
+  --text-user-bubble: #111b21;
+  --bubble-persona: #ffffff;
+  --text-main: #111b21;
+  --text-muted: #667781;
+  --accent-green: #00a884;
+  --accent-green-hover: #008f70;
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
@@ -392,14 +501,14 @@ body, html {
 .message-bubble.user {
   align-self: flex-end;
   background-color: var(--bubble-user);
-  color: #e9edef;
+  color: var(--text-user-bubble, var(--text-main));
   border-top-right-radius: 2px;
 }
 
 .message-bubble.persona {
   align-self: flex-start;
   background-color: var(--bubble-persona);
-  color: #e9edef;
+  color: var(--text-main);
   border-top-left-radius: 2px;
 }
 
