@@ -1306,6 +1306,9 @@ ${persona.storyMemory || "No prior narrative memory recorded."}
         break;
       }
       const msg = messages[i];
+      if (msg.isError || (msg.id && msg.id.startsWith('err-'))) {
+        continue;
+      }
       const role = msg.sender === 'user' ? 'user' : 'assistant';
       const tok = estimateTokens(msg.text) + 4;
       if (availableBudget - tok < 0 && formattedMessages.length > 0) {
@@ -1408,12 +1411,19 @@ ${persona.storyMemory || "No prior narrative memory recorded."}
 
         try {
           const parsed = JSON.parse(dataStr);
+          if (parsed.error) {
+            const streamErrMsg = parsed.error.message || (typeof parsed.error === 'string' ? parsed.error : 'Provider returned error');
+            throw new Error(streamErrMsg);
+          }
           const chunk = parsed.choices?.[0]?.delta?.content || parsed.choices?.[0]?.text || parsed.choices?.[0]?.message?.content || '';
           if (chunk) {
             fullText += chunk;
             if (onChunk) onChunk(chunk);
           }
         } catch (e) {
+          if (e.message && !e.message.includes('JSON') && e.message !== 'Unexpected token') {
+            throw e;
+          }
           // ignore stream chunk parse errors
         }
       }
@@ -3174,6 +3184,17 @@ ${recMsgsStr}`;
       const instruction = retryInputEl ? retryInputEl.value.trim() : '';
       closeRetryModal();
       if (isErr) {
+        if (msgId && msgId !== activePersonaId) {
+          LocalDB.deleteMessage(activePersonaId, msgId);
+        }
+        const msgs = LocalDB.getMessages(activePersonaId);
+        if (msgs && msgs.length > 0) {
+          const lastMsg = msgs[msgs.length - 1];
+          if (lastMsg && (lastMsg.isError || (lastMsg.id && lastMsg.id.startsWith('err-')))) {
+            LocalDB.deleteMessage(activePersonaId, lastMsg.id);
+          }
+        }
+        renderCurrentMessageBatch();
         generatePersonaResponse(activePersonaId, null, instruction);
       } else if (msgId) {
         retryMessage(msgId, instruction);
@@ -3600,7 +3621,11 @@ ${recMsgsStr}`;
     if (errorRetryBtn) {
       errorRetryBtn.addEventListener('click', (e) => {
         e.stopPropagation();
+        if (msg.id) {
+          LocalDB.deleteMessage(activePersonaId, msg.id);
+        }
         bubble.remove();
+        renderCurrentMessageBatch();
         const existingInstruction = msg.retryInstruction || '';
         if (e.shiftKey || e.ctrlKey) {
           generatePersonaResponse(activePersonaId, null, existingInstruction);
@@ -3835,6 +3860,19 @@ ${recMsgsStr}`;
       return;
     }
 
+    // Remove any trailing error message before generating new response
+    const existingMsgs = LocalDB.getMessages(personaId);
+    if (existingMsgs && existingMsgs.length > 0) {
+      const lastMsg = existingMsgs[existingMsgs.length - 1];
+      if (lastMsg && (lastMsg.isError || (lastMsg.id && lastMsg.id.startsWith('err-')))) {
+        LocalDB.deleteMessage(personaId, lastMsg.id);
+        if (activePersonaId === personaId) {
+          activeMessagesList = LocalDB.getMessages(personaId) || [];
+          displayedMessageCount = Math.min(displayedMessageCount, activeMessagesList.length);
+        }
+      }
+    }
+
     // Mark user messages as read (double blue checkmark)
     const activeMsgs = LocalDB.getMessages(personaId);
     activeMsgs.forEach(m => {
@@ -3944,20 +3982,24 @@ ${recMsgsStr}`;
       console.error('Streaming error:', err);
       if (activePersonaId === personaId) {
         removeTypingIndicator();
-        const errorMsgObj = {
-          id: `err-${Date.now()}`,
-          sender: 'persona',
-          text: `⚠️ Error generating response: ${err.message}`,
-          timestamp: new Date().toISOString(),
-          ...(customInstruction && customInstruction.trim() ? { retryInstruction: customInstruction.trim() } : {})
-        };
-        appendMessageBubble(errorMsgObj);
-        scrollToBottomIfNearBottom();
+      }
+      const errorMsgObj = {
+        id: `err-${Date.now()}`,
+        sender: 'persona',
+        text: `⚠️ Error generating response: ${err.message || err}`,
+        timestamp: new Date().toISOString(),
+        isError: true,
+        ...(customInstruction && customInstruction.trim() ? { retryInstruction: customInstruction.trim() } : {})
+      };
+      LocalDB.addMessage(personaId, errorMsgObj);
+      if (activePersonaId === personaId) {
+        activeMessagesList = LocalDB.getMessages(personaId) || [];
+        displayedMessageCount++;
       }
     } finally {
       const state = activeStreamingState[personaId];
-      if (state && state.bubbleEl) {
-        state.bubbleEl.classList.remove('streaming-ghost');
+      if (state && state.bubbleEl && document.body.contains(state.bubbleEl)) {
+        state.bubbleEl.remove();
       }
       delete activeStreamingState[personaId];
       generatingPersonas[personaId] = false;
