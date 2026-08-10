@@ -637,7 +637,9 @@ document.addEventListener('DOMContentLoaded', () => {
         lastPulledAt: settings.lastPulledAt || localStorage.getItem('persona_sync_last_pulled') || null,
         githubToken: settings.syncGithubToken || localStorage.getItem('persona_sync_github_token') || '',
         gistId: settings.syncGistId || localStorage.getItem('persona_sync_gist_id') || '',
-        lastGistEtag: settings.lastGistEtag || localStorage.getItem('persona_sync_last_gist_etag') || ''
+        lastGistEtag: settings.lastGistEtag || localStorage.getItem('persona_sync_last_gist_etag') || '',
+        lastGistCommitSha: settings.lastGistCommitSha || localStorage.getItem('persona_sync_last_gist_commit_sha') || '',
+        lastGistUpdatedAt: settings.lastGistUpdatedAt || localStorage.getItem('persona_sync_last_gist_updated_at') || ''
       };
     },
 
@@ -649,6 +651,8 @@ document.addEventListener('DOMContentLoaded', () => {
       if (updates.githubToken !== undefined) localStorage.setItem('persona_sync_github_token', updates.githubToken);
       if (updates.gistId !== undefined) localStorage.setItem('persona_sync_gist_id', updates.gistId);
       if (updates.lastGistEtag !== undefined) localStorage.setItem('persona_sync_last_gist_etag', updates.lastGistEtag);
+      if (updates.lastGistCommitSha !== undefined) localStorage.setItem('persona_sync_last_gist_commit_sha', updates.lastGistCommitSha);
+      if (updates.lastGistUpdatedAt !== undefined) localStorage.setItem('persona_sync_last_gist_updated_at', updates.lastGistUpdatedAt);
 
       LocalDB.saveSettings(updates);
     },
@@ -692,10 +696,16 @@ document.addEventListener('DOMContentLoaded', () => {
         throw new Error(`GitHub Gist Error (${res.status}): ${res.responseText}`);
       }
       const etag = res.getResponseHeader('ETag') || res.getResponseHeader('etag') || '';
-      if (etag) {
-        this.saveSyncSettings({ lastGistEtag: etag });
-      }
-      return JSON.parse(res.responseText);
+      const data = JSON.parse(res.responseText);
+      const commitSha = data.history?.[0]?.version || '';
+      const updatedAt = data.updated_at || '';
+
+      this.saveSyncSettings({
+        ...(etag ? { lastGistEtag: etag } : {}),
+        ...(commitSha ? { lastGistCommitSha: commitSha } : {}),
+        ...(updatedAt ? { lastGistUpdatedAt: updatedAt } : {})
+      });
+      return data;
     },
 
     async pullFromGist(token, gistId, onProgress) {
@@ -717,10 +727,15 @@ document.addEventListener('DOMContentLoaded', () => {
         throw new Error(`GitHub Gist Pull Error (${res.status}). Verify Gist ID and PAT token.`);
       }
       const etag = res.getResponseHeader('ETag') || res.getResponseHeader('etag') || '';
-      if (etag) {
-        this.saveSyncSettings({ lastGistEtag: etag });
-      }
       const data = JSON.parse(res.responseText);
+      const commitSha = data.history?.[0]?.version || '';
+      const updatedAt = data.updated_at || '';
+
+      this.saveSyncSettings({
+        ...(etag ? { lastGistEtag: etag } : {}),
+        ...(commitSha ? { lastGistCommitSha: commitSha } : {}),
+        ...(updatedAt ? { lastGistUpdatedAt: updatedAt } : {})
+      });
       const file = data.files['persona_sync_vault.enc'];
       if (!file) {
         throw new Error("Gist found but does not contain persona_sync_vault.enc file.");
@@ -754,7 +769,7 @@ document.addEventListener('DOMContentLoaded', () => {
     },
 
     async checkGistUpdate(onProgress) {
-      const { githubToken, gistId, lastGistEtag } = this.getSyncSettings();
+      const { githubToken, gistId, lastGistEtag, lastGistCommitSha, lastGistUpdatedAt } = this.getSyncSettings();
       if (!gistId) return { hasUpdate: false, notConfigured: true };
 
       const headers = { 'Accept': 'application/vnd.github.v3+json' };
@@ -778,14 +793,30 @@ document.addEventListener('DOMContentLoaded', () => {
       if (res.ok) {
         const newEtag = res.getResponseHeader('ETag') || res.getResponseHeader('etag') || '';
         const data = JSON.parse(res.responseText);
+        const remoteCommitSha = data.history?.[0]?.version || '';
+        const remoteUpdatedAt = data.updated_at || '';
+
+        const isSameCommit = remoteCommitSha && lastGistCommitSha && (remoteCommitSha === lastGistCommitSha);
+        const isSameTimestamp = remoteUpdatedAt && lastGistUpdatedAt && (remoteUpdatedAt === lastGistUpdatedAt);
+
+        if (isSameCommit || isSameTimestamp) {
+          logEvent('SYNC', 'Gist update check: 200 OK but commit/timestamp matches local sync. Up to date.', { remoteCommitSha, lastGistCommitSha });
+          this.saveSyncSettings({
+            ...(newEtag ? { lastGistEtag: newEtag } : {}),
+            ...(remoteCommitSha ? { lastGistCommitSha: remoteCommitSha } : {}),
+            ...(remoteUpdatedAt ? { lastGistUpdatedAt: remoteUpdatedAt } : {})
+          });
+          return { hasUpdate: false, notModified: true, status: 200 };
+        }
+
         onProgress?.(`Check complete: Found Gist update (${data.updated_at})!`, 100);
-        logEvent('SYNC', 'Gist update check: 200 OK. New update detected on Gist!', { newEtag, updatedAt: data.updated_at });
+        logEvent('SYNC', 'Gist update check: 200 OK. New update detected on Gist!', { newEtag, remoteCommitSha, lastGistCommitSha });
         return {
           hasUpdate: true,
           status: 200,
           newEtag: newEtag,
           updatedAt: data.updated_at,
-          commitSha: data.history?.[0]?.version
+          commitSha: remoteCommitSha
         };
       }
 
@@ -4589,12 +4620,13 @@ ${recMsgsStr}`;
 
     document.body.appendChild(banner);
 
-    // Clicking anywhere on the banner opens Device Sync & QR menu
+    // Clicking anywhere on the banner opens Device Sync & QR menu AND removes banner
     banner.addEventListener('click', (e) => {
       const dismissBtn = banner.querySelector('#btn-banner-dismiss');
       if (dismissBtn && (dismissBtn.contains(e.target) || e.target === dismissBtn)) {
         return;
       }
+      banner.remove();
       openSyncModal();
     });
 
