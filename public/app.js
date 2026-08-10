@@ -1955,14 +1955,17 @@ ${recMsgsStr}`;
       const file = e.target.files[0];
       if (!file) return;
       const reader = new FileReader();
-      reader.onload = (evt) => {
+      reader.onload = async (evt) => {
         try {
           const res = LocalDB.importAnyJson(evt.target.result);
           loadSettingsIntoUI();
-          loadPersonas();
+          await loadPersonas();
           if (closeImportModal && importModal) hideModal(importModal);
           if (res.firstPersonaId) {
-            selectPersona(res.firstPersonaId);
+            selectPersona(res.firstPersonaId, true);
+          } else if (personas && personas.length > 0) {
+            const targetId = activePersonaId && personas.some(p => p.id === activePersonaId) ? activePersonaId : personas[0].id;
+            selectPersona(targetId, true);
           }
           showAlertDialog({
             title: 'Import Successful',
@@ -2008,10 +2011,9 @@ ${recMsgsStr}`;
           await LocalDB.clearAll();
           await LocalDB.init();
           hideModal(importModal);
-          personas = LocalDB.getPersonas();
-          renderContactList(personas);
+          await loadPersonas();
           if (personas.length > 0) {
-            selectPersona(personas[0].id);
+            selectPersona(personas[0].id, true);
           }
           showAlertDialog({
             title: 'Storage Reset',
@@ -2297,10 +2299,11 @@ ${recMsgsStr}`;
         hasGistUpdateAvailable = false;
         const banner = document.getElementById('gist-update-floating-banner');
         if (banner) banner.remove();
-        loadPersonas();
+        await loadPersonas();
         loadSettingsIntoUI();
         if (personas && personas.length > 0) {
-          selectPersona(activePersonaId || personas[0].id);
+          const targetId = activePersonaId && personas.some(p => p.id === activePersonaId) ? activePersonaId : personas[0].id;
+          selectPersona(targetId, true);
         }
         showToast(`Successfully pulled and restored ${res.count} persona(s) & settings from Gist!`);
         updateSyncStatusUI();
@@ -2326,10 +2329,11 @@ ${recMsgsStr}`;
         hasGistUpdateAvailable = false;
         const banner = document.getElementById('gist-update-floating-banner');
         if (banner) banner.remove();
-        loadPersonas();
+        await loadPersonas();
         loadSettingsIntoUI();
         if (personas && personas.length > 0) {
-          selectPersona(activePersonaId || personas[0].id);
+          const targetId = activePersonaId && personas.some(p => p.id === activePersonaId) ? activePersonaId : personas[0].id;
+          selectPersona(targetId, true);
         }
         showToast('Smart sync complete! Local & Gist vault merged and updated.');
         updateSyncStatusUI();
@@ -3446,7 +3450,7 @@ ${recMsgsStr}`;
   // -------------------------------------------------------------
   // Persona Selection & Active View
   // -------------------------------------------------------------
-  function selectPersona(personaId) {
+  function selectPersona(personaId, forceReRender = false) {
     const isSamePersona = activePersonaId === personaId;
     activePersonaId = personaId;
     const persona = LocalDB.getPersona(personaId);
@@ -3469,7 +3473,7 @@ ${recMsgsStr}`;
 
     renderContactList(LocalDB.getPersonas());
 
-    if (!isSamePersona) {
+    if (!isSamePersona || forceReRender) {
       renderChatFeed(personaId);
     } else {
       scrollToBottomIfNearBottom();
@@ -4529,7 +4533,7 @@ ${recMsgsStr}`;
     });
   }
 
-  personaForm.addEventListener('submit', (e) => {
+  personaForm.addEventListener('submit', async (e) => {
     e.preventDefault();
     const idInput = document.getElementById('form-persona-id').value;
     const name = document.getElementById('form-name').value.trim();
@@ -4558,8 +4562,8 @@ ${recMsgsStr}`;
 
     LocalDB.savePersona(personaData);
     hideModal(personaModal);
-    loadPersonas();
-    selectPersona(personaId);
+    await loadPersonas();
+    selectPersona(personaId, true);
   });
 
   // Helper Escape HTML
