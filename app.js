@@ -695,16 +695,36 @@ document.addEventListener('DOMContentLoaded', () => {
       if (!res.ok) {
         throw new Error(`GitHub Gist Error (${res.status}): ${res.responseText}`);
       }
-      const etag = res.getResponseHeader('ETag') || res.getResponseHeader('etag') || '';
-      const data = JSON.parse(res.responseText);
-      const commitSha = data.history?.[0]?.version || '';
-      const updatedAt = data.updated_at || '';
 
-      this.saveSyncSettings({
-        ...(etag ? { lastGistEtag: etag } : {}),
-        ...(commitSha ? { lastGistCommitSha: commitSha } : {}),
-        ...(updatedAt ? { lastGistUpdatedAt: updatedAt } : {})
-      });
+      const data = JSON.parse(res.responseText);
+      const targetGistId = data.id || gistId;
+
+      // Immediately fetch official GET metadata to cache correct GET ETag, commit SHA & timestamp
+      try {
+        const checkRes = await requestWithProgress({
+          method: 'GET',
+          url: `https://api.github.com/gists/${targetGistId}`,
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Accept': 'application/vnd.github.v3+json'
+          }
+        });
+        if (checkRes.ok) {
+          const getEtag = checkRes.getResponseHeader('ETag') || checkRes.getResponseHeader('etag') || '';
+          const getData = JSON.parse(checkRes.responseText);
+          const getCommitSha = getData.history?.[0]?.version || '';
+          const getUpdatedAt = getData.updated_at || '';
+          this.saveSyncSettings({
+            ...(getEtag ? { lastGistEtag: getEtag } : {}),
+            ...(getCommitSha ? { lastGistCommitSha: getCommitSha } : {}),
+            ...(getUpdatedAt ? { lastGistUpdatedAt: getUpdatedAt } : {}),
+            ...(targetGistId ? { gistId: targetGistId } : {})
+          });
+        }
+      } catch (e) {
+        console.warn('[SYNC] Failed to fetch GET metadata after push:', e);
+      }
+
       return data;
     },
 
@@ -797,7 +817,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const remoteUpdatedAt = data.updated_at || '';
 
         const isSameCommit = remoteCommitSha && lastGistCommitSha && (remoteCommitSha === lastGistCommitSha);
-        const isSameTimestamp = remoteUpdatedAt && lastGistUpdatedAt && (remoteUpdatedAt === lastGistUpdatedAt);
+        const isSameTimestamp = remoteUpdatedAt && lastGistUpdatedAt && (new Date(remoteUpdatedAt).getTime() === new Date(lastGistUpdatedAt).getTime());
 
         if (isSameCommit || isSameTimestamp) {
           logEvent('SYNC', 'Gist update check: 200 OK but commit/timestamp matches local sync. Up to date.', { remoteCommitSha, lastGistCommitSha });
