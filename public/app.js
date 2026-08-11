@@ -9,6 +9,19 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  function safeLocalStorageSet(key, value) {
+    try {
+      localStorage.setItem(key, value);
+    } catch (e) {
+      try {
+        localStorage.removeItem('persona_db');
+        localStorage.setItem(key, value);
+      } catch (err) {
+        console.warn(`[STORAGE] LocalStorage setItem failed for key '${key}':`, err);
+      }
+    }
+  }
+
   const MEMORY_AUTO_SYNC_INTERVAL = 12;
 
   // -------------------------------------------------------------
@@ -185,11 +198,7 @@ document.addEventListener('DOMContentLoaded', () => {
       this.setIDB(this.KEY, data);
 
       // Best-effort write to localStorage, catching quota error cleanly
-      try {
-        localStorage.setItem(this.KEY, JSON.stringify(data));
-      } catch (e) {
-        // Quota exceeded in LocalStorage is expected for large histories; IndexedDB holds full data safely.
-      }
+      safeLocalStorageSet(this.KEY, JSON.stringify(data));
     },
 
     async clearAll() {
@@ -644,15 +653,26 @@ document.addEventListener('DOMContentLoaded', () => {
     },
 
     saveSyncSettings(updates) {
-      if (updates.syncId !== undefined) localStorage.setItem('persona_sync_id', updates.syncId);
-      if (updates.syncKey !== undefined) localStorage.setItem('persona_sync_key', updates.syncKey);
-      if (updates.lastPushedAt !== undefined) localStorage.setItem('persona_sync_last_pushed', updates.lastPushedAt);
-      if (updates.lastPulledAt !== undefined) localStorage.setItem('persona_sync_last_pulled', updates.lastPulledAt);
-      if (updates.githubToken !== undefined) localStorage.setItem('persona_sync_github_token', updates.githubToken);
-      if (updates.gistId !== undefined) localStorage.setItem('persona_sync_gist_id', updates.gistId);
-      if (updates.lastGistEtag !== undefined) localStorage.setItem('persona_sync_last_gist_etag', updates.lastGistEtag);
-      if (updates.lastGistCommitSha !== undefined) localStorage.setItem('persona_sync_last_gist_commit_sha', updates.lastGistCommitSha);
-      if (updates.lastGistUpdatedAt !== undefined) localStorage.setItem('persona_sync_last_gist_updated_at', updates.lastGistUpdatedAt);
+      const token = updates.syncGithubToken !== undefined ? updates.syncGithubToken : updates.githubToken;
+      const gistId = updates.syncGistId !== undefined ? updates.syncGistId : updates.gistId;
+
+      if (updates.syncId !== undefined) safeLocalStorageSet('persona_sync_id', updates.syncId);
+      if (updates.syncKey !== undefined) safeLocalStorageSet('persona_sync_key', updates.syncKey);
+      if (updates.lastPushedAt !== undefined) safeLocalStorageSet('persona_sync_last_pushed', updates.lastPushedAt);
+      if (updates.lastPulledAt !== undefined) safeLocalStorageSet('persona_sync_last_pulled', updates.lastPulledAt);
+      if (token !== undefined) {
+        safeLocalStorageSet('persona_sync_github_token', token);
+        updates.syncGithubToken = token;
+        updates.githubToken = token;
+      }
+      if (gistId !== undefined) {
+        safeLocalStorageSet('persona_sync_gist_id', gistId);
+        updates.syncGistId = gistId;
+        updates.gistId = gistId;
+      }
+      if (updates.lastGistEtag !== undefined) safeLocalStorageSet('persona_sync_last_gist_etag', updates.lastGistEtag);
+      if (updates.lastGistCommitSha !== undefined) safeLocalStorageSet('persona_sync_last_gist_commit_sha', updates.lastGistCommitSha);
+      if (updates.lastGistUpdatedAt !== undefined) safeLocalStorageSet('persona_sync_last_gist_updated_at', updates.lastGistUpdatedAt);
 
       LocalDB.saveSettings(updates);
     },
@@ -1932,11 +1952,11 @@ ${recMsgsStr}`;
   function setSidebarCollapsed(collapsed) {
     if (collapsed) {
       appContainerEl.classList.add('sidebar-collapsed');
-      localStorage.setItem('sidebar_collapsed', 'true');
+      safeLocalStorageSet('sidebar_collapsed', 'true');
       if (btnToggleSidebar) btnToggleSidebar.title = 'Expand Side Panel';
     } else {
       appContainerEl.classList.remove('sidebar-collapsed');
-      localStorage.setItem('sidebar_collapsed', 'false');
+      safeLocalStorageSet('sidebar_collapsed', 'false');
       if (btnToggleSidebar) btnToggleSidebar.title = 'Fold Side Panel';
     }
   }
