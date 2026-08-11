@@ -1291,10 +1291,24 @@ document.addEventListener('DOMContentLoaded', () => {
       const remoteCustomModels = Array.isArray(remoteDB.settings?.customModels) ? remoteDB.settings.customModels : [];
       const mergedCustomModels = Array.from(new Set([...localCustomModels, ...remoteCustomModels]));
 
+      const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const currentSyncSettings = {
+        lastPushedAt: now,
+        lastPulledAt: now,
+        lastGistEtag: localStorage.getItem('persona_sync_last_gist_etag') || localDB.settings?.lastGistEtag || '',
+        lastGistCommitSha: localStorage.getItem('persona_sync_last_gist_commit_sha') || localDB.settings?.lastGistCommitSha || '',
+        lastGistUpdatedAt: localStorage.getItem('persona_sync_last_gist_updated_at') || localDB.settings?.lastGistUpdatedAt || '',
+        gistId: gistId,
+        githubToken: githubToken,
+        syncId: syncId,
+        syncKey: syncKey
+      };
+
       const mergedSettings = {
-        ...(localDB.settings || {}),
         ...(remoteDB.settings || {}),
-        customModels: mergedCustomModels
+        ...(localDB.settings || {}),
+        customModels: mergedCustomModels,
+        ...currentSyncSettings
       };
 
       const mergedDB = {
@@ -1305,6 +1319,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       onProgress?.('Saving merged vault locally...', 60);
       LocalDB.saveRaw(mergedDB);
+      this.saveSyncSettings(currentSyncSettings);
 
       return await this.pushToCloud((label, pct) => {
         const adjustedPct = 60 + Math.round(pct * 0.4);
