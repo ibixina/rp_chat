@@ -3836,15 +3836,50 @@ ${recMsgsStr}`;
       });
     }
 
-    // Double Click Inline Edit
+    // Double Click & Touch Double Tap Inline Edit
     const textEl = bubble.querySelector('.message-text');
     textEl.addEventListener('dblclick', (e) => {
       e.stopPropagation();
       enableInlineEdit(msg, textEl, bubble);
     });
 
+    let lastTapTime = 0;
+    let touchStartX = 0;
+    let touchStartY = 0;
+
+    textEl.addEventListener('touchstart', (e) => {
+      if (e.touches.length === 1) {
+        touchStartX = e.touches[0].clientX;
+        touchStartY = e.touches[0].clientY;
+      }
+    }, { passive: true });
+
+    textEl.addEventListener('touchend', (e) => {
+      if (e.changedTouches.length === 1) {
+        const touch = e.changedTouches[0];
+        const distX = Math.abs(touch.clientX - touchStartX);
+        const distY = Math.abs(touch.clientY - touchStartY);
+        if (distX > 10 || distY > 10) {
+          lastTapTime = 0;
+          return;
+        }
+      }
+      const currentTime = Date.now();
+      const tapLength = currentTime - lastTapTime;
+      if (tapLength < 350 && tapLength > 0) {
+        e.preventDefault();
+        e.stopPropagation();
+        enableInlineEdit(msg, textEl, bubble);
+      }
+      lastTapTime = currentTime;
+    });
+
     chatFeedEl.appendChild(bubble);
     return bubble;
+  }
+
+  function isMobileDevice() {
+    return window.innerWidth <= 768 || ('ontouchstart' in window && window.innerWidth <= 1024) || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
   }
 
   function enableInlineEdit(msg, textEl, bubble) {
@@ -3870,6 +3905,14 @@ ${recMsgsStr}`;
 
     if (chatFeedEl) {
       chatFeedEl.scrollTop = initialScrollTop;
+    }
+
+    if (isMobileDevice()) {
+      setTimeout(() => {
+        if (bubble.classList.contains('editing')) {
+          textEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        }
+      }, 150);
     }
 
     let isFinished = false;
@@ -3908,9 +3951,15 @@ ${recMsgsStr}`;
     }
 
     function handleKeyDown(e) {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        saveAndExit(false);
+      if (e.key === 'Enter') {
+        if (isMobileDevice()) {
+          // On mobile, pressing Enter adds a newline instead of saving
+          return;
+        }
+        if (!e.shiftKey) {
+          e.preventDefault();
+          saveAndExit(false);
+        }
       } else if (e.key === 'Escape') {
         e.preventDefault();
         saveAndExit(true);
@@ -4255,9 +4304,16 @@ ${recMsgsStr}`;
   btnSend.addEventListener('click', sendMessage);
 
   messageInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage();
+    if (e.key === 'Enter') {
+      if (isMobileDevice()) {
+        // On mobile, Enter key adds a new line instead of submitting.
+        // For submitting, user presses the send button.
+        return;
+      }
+      if (!e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+      }
     }
   });
 
@@ -4272,7 +4328,7 @@ ${recMsgsStr}`;
       const activeChatView = document.getElementById('active-chat-view');
       const appContainer = document.querySelector('.app-container');
       const isFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement);
-      const isMobile = window.innerWidth <= 768 || isFullscreen;
+      const isMobile = isMobileDevice() || isFullscreen;
 
       if (isMobile && activeChatView) {
         const vpHeight = window.visualViewport.height;
@@ -4280,7 +4336,16 @@ ${recMsgsStr}`;
         if (appContainer && isFullscreen) {
           appContainer.style.height = `${vpHeight}px`;
         }
-        scrollToBottom();
+
+        const editingBubble = document.querySelector('.message-bubble.editing');
+        if (editingBubble) {
+          const editingText = editingBubble.querySelector('.message-text');
+          if (editingText) {
+            editingText.scrollIntoView({ block: 'nearest' });
+          }
+        } else if (document.activeElement === messageInput) {
+          scrollToBottomIfNearBottom();
+        }
       }
     };
 

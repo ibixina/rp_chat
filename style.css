@@ -1082,6 +1082,7 @@ body, html {
 .message-text {
   cursor: pointer;
   user-select: text;
+  touch-action: manipulation;
   transition: background 0.15s ease, border-color 0.15s ease;
   border-radius: 4px;
   white-space: pre-wrap;
