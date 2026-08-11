@@ -698,31 +698,40 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const data = JSON.parse(res.responseText);
       const targetGistId = data.id || gistId;
+      const etag = res.getResponseHeader('ETag') || res.getResponseHeader('etag') || '';
+      const commitSha = data.history?.[0]?.version || '';
+      const updatedAt = data.updated_at || '';
 
-      // Immediately fetch official GET metadata to cache correct GET ETag, commit SHA & timestamp
-      try {
-        const checkRes = await requestWithProgress({
-          method: 'GET',
-          url: `https://api.github.com/gists/${targetGistId}`,
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Accept': 'application/vnd.github.v3+json'
-          }
-        });
-        if (checkRes.ok) {
-          const getEtag = checkRes.getResponseHeader('ETag') || checkRes.getResponseHeader('etag') || '';
-          const getData = JSON.parse(checkRes.responseText);
-          const getCommitSha = getData.history?.[0]?.version || '';
-          const getUpdatedAt = getData.updated_at || '';
-          this.saveSyncSettings({
-            ...(getEtag ? { lastGistEtag: getEtag } : {}),
-            ...(getCommitSha ? { lastGistCommitSha: getCommitSha } : {}),
-            ...(getUpdatedAt ? { lastGistUpdatedAt: getUpdatedAt } : {}),
-            ...(targetGistId ? { gistId: targetGistId } : {})
+      this.saveSyncSettings({
+        ...(etag ? { lastGistEtag: etag } : {}),
+        ...(commitSha ? { lastGistCommitSha: commitSha } : {}),
+        ...(updatedAt ? { lastGistUpdatedAt: updatedAt } : {}),
+        ...(targetGistId ? { gistId: targetGistId } : {})
+      });
+
+      // Optional best-effort GET refresh if commitSha/updatedAt missing
+      if (!commitSha || !updatedAt) {
+        try {
+          const checkRes = await requestWithProgress({
+            method: 'GET',
+            url: `https://api.github.com/gists/${targetGistId}`,
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Accept': 'application/vnd.github.v3+json'
+            }
           });
-        }
-      } catch (e) {
-        console.warn('[SYNC] Failed to fetch GET metadata after push:', e);
+          if (checkRes.ok) {
+            const getEtag = checkRes.getResponseHeader('ETag') || checkRes.getResponseHeader('etag') || '';
+            const getData = JSON.parse(checkRes.responseText);
+            const getCommitSha = getData.history?.[0]?.version || '';
+            const getUpdatedAt = getData.updated_at || '';
+            this.saveSyncSettings({
+              ...(getEtag ? { lastGistEtag: getEtag } : {}),
+              ...(getCommitSha ? { lastGistCommitSha: getCommitSha } : {}),
+              ...(getUpdatedAt ? { lastGistUpdatedAt: getUpdatedAt } : {})
+            });
+          }
+        } catch (e) {}
       }
 
       return data;
@@ -817,10 +826,12 @@ document.addEventListener('DOMContentLoaded', () => {
         const remoteUpdatedAt = data.updated_at || '';
 
         const isSameCommit = remoteCommitSha && lastGistCommitSha && (remoteCommitSha === lastGistCommitSha);
-        const isSameTimestamp = remoteUpdatedAt && lastGistUpdatedAt && (new Date(remoteUpdatedAt).getTime() === new Date(lastGistUpdatedAt).getTime());
+        const remoteTime = remoteUpdatedAt ? new Date(remoteUpdatedAt).getTime() : 0;
+        const localTime = lastGistUpdatedAt ? new Date(lastGistUpdatedAt).getTime() : 0;
+        const isNotNewerTimestamp = remoteTime > 0 && localTime > 0 && remoteTime <= localTime;
 
-        if (isSameCommit || isSameTimestamp) {
-          logEvent('SYNC', 'Gist update check: 200 OK but commit/timestamp matches local sync. Up to date.', { remoteCommitSha, lastGistCommitSha });
+        if (isSameCommit || isNotNewerTimestamp) {
+          logEvent('SYNC', 'Gist update check: 200 OK but commit/timestamp matches or is not newer than local sync. Up to date.', { remoteCommitSha, lastGistCommitSha, remoteUpdatedAt, lastGistUpdatedAt });
           this.saveSyncSettings({
             ...(newEtag ? { lastGistEtag: newEtag } : {}),
             ...(remoteCommitSha ? { lastGistCommitSha: remoteCommitSha } : {}),
@@ -1175,12 +1186,26 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       }
 
+      // Capture active device sync settings before importing payload (so imported payload doesn't overwrite current Gist metadata)
+      const currentSyncSettings = {
+        lastGistEtag: localStorage.getItem('persona_sync_last_gist_etag') || '',
+        lastGistCommitSha: localStorage.getItem('persona_sync_last_gist_commit_sha') || '',
+        lastGistUpdatedAt: localStorage.getItem('persona_sync_last_gist_updated_at') || '',
+        gistId: gistId,
+        githubToken: githubToken,
+        syncId: syncId,
+        syncKey: syncKey
+      };
+
       const decryptedData = await this.decryptPayload(encryptedObj, syncKey, onProgress);
       onProgress?.('Restoring personas, chats & settings to IndexedDB...', 92);
       LocalDB.importAnyJson(decryptedData);
 
       const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      this.saveSyncSettings({ lastPulledAt: now });
+      this.saveSyncSettings({
+        lastPulledAt: now,
+        ...currentSyncSettings
+      });
 
       onProgress?.('Vault pull complete!', 100);
       return { success: true, timestamp: now, count: decryptedData.personas?.length || 0 };
@@ -2384,11 +2409,11 @@ ${recMsgsStr}`;
           const timeStr = checkRes.updatedAt ? new Date(checkRes.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
           showToast(`⚡ Gist update detected! (${timeStr}) Click "Pull Data" to restore.`, 'info');
           showGistUpdateBanner(checkRes.updatedAt);
-        } else if (checkRes.notModified) {
-          hasGistUpdateAvailable = false;
-          showToast('✅ Gist is up to date! (HTTP 304 Not Modified — 0 bytes downloaded)');
         } else {
-          showToast('No Gist updates found.');
+          hasGistUpdateAvailable = false;
+          const banner = document.getElementById('gist-update-floating-banner');
+          if (banner) banner.remove();
+          showToast('✅ Gist is up to date! (0 bytes downloaded)');
         }
         updateSyncStatusUI();
         hideSyncProgress(2000);
@@ -4723,6 +4748,8 @@ ${recMsgsStr}`;
     if (btnDismiss) {
       btnDismiss.addEventListener('click', (e) => {
         e.stopPropagation();
+        hasGistUpdateAvailable = false;
+        updateSyncStatusUI();
         banner.style.opacity = '0';
         banner.style.transition = 'opacity 0.25s ease';
         setTimeout(() => banner.remove(), 250);
@@ -4740,6 +4767,11 @@ ${recMsgsStr}`;
         hasGistUpdateAvailable = true;
         updateSyncStatusUI();
         showGistUpdateBanner(checkRes.updatedAt);
+      } else {
+        hasGistUpdateAvailable = false;
+        const banner = document.getElementById('gist-update-floating-banner');
+        if (banner) banner.remove();
+        updateSyncStatusUI();
       }
     } catch (err) {
       console.warn('[SYNC] Auto Gist check on launch failed:', err);
