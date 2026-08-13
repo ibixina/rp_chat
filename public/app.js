@@ -3568,6 +3568,7 @@ ${recMsgsStr}`;
   function renderChatFeed(personaId) {
     activeMessagesList = LocalDB.getMessages(personaId) || [];
     displayedMessageCount = Math.min(MESSAGE_BATCH_SIZE, activeMessagesList.length);
+    userScrolledUp = false;
     renderCurrentMessageBatch();
     scrollToBottom();
   }
@@ -3577,7 +3578,7 @@ ${recMsgsStr}`;
       activeMessagesList = LocalDB.getMessages(activePersonaId) || [];
     }
 
-    const wasNearBottom = isNearBottom(150);
+    const wasNearBottom = !userScrolledUp;
     const oldScrollHeight = chatFeedEl ? chatFeedEl.scrollHeight : 0;
     const oldScrollTop = chatFeedEl ? chatFeedEl.scrollTop : 0;
 
@@ -3637,7 +3638,10 @@ ${recMsgsStr}`;
     renderCurrentMessageBatch(true);
   }
 
+  let userScrolledUp = false;
+  let isProgrammaticScroll = false;
   let isScrollLoading = false;
+
   if (chatFeedEl) {
     chatFeedEl.addEventListener('scroll', () => {
       if (activePersonaId) {
@@ -3650,8 +3654,42 @@ ${recMsgsStr}`;
           setTimeout(() => { isScrollLoading = false; }, 300);
         }
       }
+
+      if (!isProgrammaticScroll) {
+        const distanceToBottom = chatFeedEl.scrollHeight - chatFeedEl.scrollTop - chatFeedEl.clientHeight;
+        if (distanceToBottom > 15) {
+          userScrolledUp = true;
+        } else {
+          userScrolledUp = false;
+        }
+      }
+
       updateScrollBottomBtn();
     });
+
+    chatFeedEl.addEventListener('wheel', (e) => {
+      if (e.deltaY < 0) {
+        userScrolledUp = true;
+        updateScrollBottomBtn();
+      }
+    }, { passive: true });
+
+    let touchStartY = 0;
+    chatFeedEl.addEventListener('touchstart', (e) => {
+      if (e.touches && e.touches[0]) {
+        touchStartY = e.touches[0].clientY;
+      }
+    }, { passive: true });
+
+    chatFeedEl.addEventListener('touchmove', (e) => {
+      if (e.touches && e.touches[0]) {
+        const currentY = e.touches[0].clientY;
+        if (currentY - touchStartY > 5) {
+          userScrolledUp = true;
+          updateScrollBottomBtn();
+        }
+      }
+    }, { passive: true });
   }
 
   const scrollBottomBtn = document.getElementById('btn-scroll-bottom');
@@ -3661,7 +3699,7 @@ ${recMsgsStr}`;
     });
   }
 
-  function isNearBottom(threshold = 150) {
+  function isNearBottom(threshold = 20) {
     if (!chatFeedEl) return true;
     const distanceToBottom = chatFeedEl.scrollHeight - chatFeedEl.scrollTop - chatFeedEl.clientHeight;
     return distanceToBottom <= threshold;
@@ -3669,17 +3707,22 @@ ${recMsgsStr}`;
 
   function scrollToBottom() {
     if (chatFeedEl) {
+      userScrolledUp = false;
+      isProgrammaticScroll = true;
       chatFeedEl.scrollTop = chatFeedEl.scrollHeight;
       requestAnimationFrame(() => {
         if (chatFeedEl) chatFeedEl.scrollTop = chatFeedEl.scrollHeight;
+        setTimeout(() => {
+          isProgrammaticScroll = false;
+        }, 50);
       });
     }
     updateScrollBottomBtn();
   }
 
-  function scrollToBottomIfNearBottom(threshold = 150) {
+  function scrollToBottomIfNearBottom() {
     if (!chatFeedEl) return;
-    if (isNearBottom(threshold)) {
+    if (!userScrolledUp) {
       scrollToBottom();
     }
     updateScrollBottomBtn();
@@ -3688,7 +3731,7 @@ ${recMsgsStr}`;
   function updateScrollBottomBtn() {
     const btn = document.getElementById('btn-scroll-bottom');
     if (!btn) return;
-    if (!isNearBottom(120)) {
+    if (userScrolledUp || !isNearBottom(20)) {
       btn.classList.remove('hidden');
     } else {
       btn.classList.add('hidden');
