@@ -3874,7 +3874,11 @@ ${recMsgsStr}`;
           <button class="action-btn retry-btn" title="Regenerate this turn (Hold Shift for instant retry)">
             <i class="fa-solid fa-rotate"></i>
           </button>
-        ` : ''}
+        ` : `
+          <button class="action-btn generate-btn" title="Generate persona response to this message">
+            <i class="fa-solid fa-paper-plane"></i>
+          </button>
+        `}
         <button class="action-btn delete-btn" title="Delete message">
           <i class="fa-solid fa-trash"></i>
         </button>
@@ -3939,6 +3943,15 @@ ${recMsgsStr}`;
         continuePersonaMessage(msg, bubble);
       });
     }
+    // Generate Response for User Message
+    const generateBtn = bubble.querySelector('.generate-btn');
+    if (generateBtn) {
+      generateBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        generateResponseForUserMessage(msg.id);
+      });
+    }
+
 
     // Double Click & Touch Double Tap Inline Edit
     const textEl = bubble.querySelector('.message-text');
@@ -4138,7 +4151,20 @@ ${recMsgsStr}`;
   // -------------------------------------------------------------
   async function sendMessage() {
     const text = messageInput.value.trim();
-    if (!text || !activePersonaId || generatingPersonas[activePersonaId]) return;
+    if (!activePersonaId || generatingPersonas[activePersonaId]) return;
+
+    if (!text) {
+      const msgs = LocalDB.getMessages(activePersonaId);
+      if (msgs && msgs.length > 0) {
+        const lastMsg = msgs[msgs.length - 1];
+        if (lastMsg && (lastMsg.sender === 'user' || lastMsg.isError || (lastMsg.id && lastMsg.id.startsWith('err-')))) {
+          userScrolledUp = false;
+          scrollToBottom();
+          await generatePersonaResponse(activePersonaId);
+        }
+      }
+      return;
+    }
 
     const targetPersonaId = activePersonaId;
     const userMsgId = `msg-${Date.now()}`;
@@ -4339,6 +4365,24 @@ ${recMsgsStr}`;
     renderChatFeed(targetPersonaId);
     await generatePersonaResponse(targetPersonaId, null, customInstruction);
   }
+  async function generateResponseForUserMessage(msgId) {
+    const targetPersonaId = activePersonaId;
+    if (!targetPersonaId || generatingPersonas[targetPersonaId]) return;
+
+    const msgs = LocalDB.getMessages(targetPersonaId);
+    if (!msgs || msgs.length === 0) return;
+
+    const targetIdx = msgs.findIndex(m => m.id === msgId);
+    if (targetIdx > -1) {
+      const newMsgs = msgs.slice(0, targetIdx + 1);
+      LocalDB.setMessages(targetPersonaId, newMsgs);
+    }
+
+    userScrolledUp = false;
+    renderChatFeed(targetPersonaId);
+    await generatePersonaResponse(targetPersonaId);
+  }
+
 
   async function continuePersonaMessage(msg, bubble) {
     const targetPersonaId = activePersonaId;

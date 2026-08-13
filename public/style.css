@@ -1023,6 +1023,10 @@ body, html {
   color: #53bdeb;
   background-color: rgba(83, 189, 235, 0.15);
 }
+.message-actions-toolbar .generate-btn:hover {
+  color: #53bdeb;
+  background-color: rgba(83, 189, 235, 0.15);
+}
 
 .message-actions-toolbar .delete-btn:hover {
   color: #f15c6d;
