@@ -4186,6 +4186,21 @@ ${recMsgsStr}`;
     appendMessageBubble(userMsg);
     scrollToBottom();
 
+    // Trigger auto memory summarization after user's message is added,
+    // confirming acceptance of the previous persona response.
+    const persona = LocalDB.getPersona(targetPersonaId);
+    const settings = LocalDB.getSettings();
+    const allMsgs = LocalDB.getMessages(targetPersonaId);
+    const lastSyncedCount = persona?.lastSyncedMessageCount || 0;
+    const msgsSinceSync = Math.max(allMsgs.length - lastSyncedCount, 0);
+
+    if (msgsSinceSync >= MEMORY_AUTO_SYNC_INTERVAL) {
+      triggerMemorySummarization(persona, allMsgs, settings);
+    } else {
+      const msgsLeft = MEMORY_AUTO_SYNC_INTERVAL - msgsSinceSync;
+      logEvent('MEMORY', `User message sent (${allMsgs.length} total). Messages since last sync: ${msgsSinceSync}/${MEMORY_AUTO_SYNC_INTERVAL}. Next auto-summarization in ${msgsLeft} message(s).`);
+    }
+
     await generatePersonaResponse(targetPersonaId);
   }
 
@@ -4309,13 +4324,8 @@ ${recMsgsStr}`;
       const updatedPersona = LocalDB.getPersona(personaId) || persona;
       const lastSyncedCount = updatedPersona.lastSyncedMessageCount || 0;
       const msgsSinceSync = Math.max(allMsgs.length - lastSyncedCount, 0);
-
-      if (msgsSinceSync >= MEMORY_AUTO_SYNC_INTERVAL) {
-        triggerMemorySummarization(updatedPersona, allMsgs, settings);
-      } else {
-        const msgsLeft = MEMORY_AUTO_SYNC_INTERVAL - msgsSinceSync;
-        logEvent('MEMORY', `Message ${allMsgs.length} completed. Messages since last sync: ${msgsSinceSync}/${MEMORY_AUTO_SYNC_INTERVAL}. Next auto-summarization in ${msgsLeft} message(s).`);
-      }
+      const msgsLeft = Math.max(MEMORY_AUTO_SYNC_INTERVAL - msgsSinceSync, 0);
+      logEvent('MEMORY', `Persona message ${allMsgs.length} completed. Auto-summarization will evaluate after next user message (${msgsLeft} message(s) left).`);
 
     } catch (err) {
       console.error('Streaming error:', err);

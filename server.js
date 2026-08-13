@@ -632,16 +632,7 @@ app.post("/api/chats/:personaId/continue", async (req, res) => {
       `data: ${JSON.stringify({ done: true, fullText: assistantText, assistantMsgId: savedMsg.id })}\n\n`,
     );
 
-    // Trigger memory summarization every 12 messages
-    const totalMessages = db.getMessages(personaId).length;
-    const lastCount = persona.lastMemoryMsgCount || 0;
-    if (totalMessages >= 12 && totalMessages - lastCount >= 12) {
-      logEvent(
-        "Memory Engine",
-        `Auto-triggering background memory summarization for "${persona.name}"...`,
-      );
-      triggerMemorySummarization(personaId);
-    }
+    // Memory summarization will be evaluated on next user message
   }
   res.end();
 });
@@ -727,13 +718,23 @@ app.post("/api/chats/:personaId/stream", async (req, res) => {
     return res.status(404).json({ success: false, error: "Persona not found" });
   }
 
-  // Save user message
   const userMsg = db.addMessage(personaId, {
     id: userMsgId || undefined,
     sender: "user",
     text: text.trim(),
     timestamp: new Date().toISOString(),
   });
+
+  // Trigger memory summarization after user message is saved (confirming prior persona responses)
+  const totalMessagesCount = db.getMessages(personaId).length;
+  const lastCountMsgs = persona.lastMemoryMsgCount || 0;
+  if (totalMessagesCount >= 12 && totalMessagesCount - lastCountMsgs >= 12) {
+    logEvent(
+      "Memory Engine",
+      `Auto-triggering background memory summarization for "${persona.name}"...`,
+    );
+    triggerMemorySummarization(personaId);
+  }
 
   const allMessages = db.getMessages(personaId);
   const promptMessages = [
@@ -762,16 +763,7 @@ app.post("/api/chats/:personaId/stream", async (req, res) => {
       `data: ${JSON.stringify({ done: true, fullText: assistantText, assistantMsgId: savedAssistantMsg.id })}\n\n`,
     );
 
-    // Trigger memory summarization every 6 messages
-    const totalMessages = db.getMessages(personaId).length;
-    const lastCount = persona.lastMemoryMsgCount || 0;
-    if (totalMessages >= 6 && totalMessages - lastCount >= 6) {
-      logEvent(
-        "Memory Engine",
-        `Auto-triggering background memory summarization for "${persona.name}"...`,
-      );
-      triggerMemorySummarization(personaId);
-    }
+    // Memory summarization evaluated on user message
   }
   res.end();
 });
@@ -955,6 +947,10 @@ ${formattedTranscript}`,
       const mergedMemory = applyMemoryDelta(persona.storyMemory, deltaOutput.trim());
       const lastMsg = messages && messages.length > 0 ? messages[messages.length - 1] : null;
       db.updateMemory(personaId, mergedMemory, lastMsg ? lastMsg.id : null);
+      if (persona) {
+        persona.lastMemoryMsgCount = messages ? messages.length : 0;
+        persona.lastMemorySyncTime = new Date().toISOString();
+      }
       console.log(
         `[Memory Engine] Story memory successfully patched and updated for ${persona.name}`,
       );
