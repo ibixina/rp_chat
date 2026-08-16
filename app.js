@@ -4069,6 +4069,11 @@ ${recMsgsStr}`;
 
     function handleKeyDown(e) {
       if (e.key === 'Enter') {
+        if (e.ctrlKey || e.metaKey) {
+          e.preventDefault();
+          saveAndExit(false);
+          return;
+        }
         if (isMobileDevice()) {
           // On mobile, pressing Enter adds a newline instead of saving
           return;
@@ -4463,9 +4468,14 @@ ${recMsgsStr}`;
 
   messageInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault();
+        sendMessage();
+        return;
+      }
       if (isMobileDevice()) {
         // On mobile, Enter key adds a new line instead of submitting.
-        // For submitting, user presses the send button.
+        // For submitting, user presses Ctrl+Enter or the send button.
         return;
       }
       if (!e.shiftKey) {
