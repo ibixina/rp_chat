@@ -3582,6 +3582,8 @@ ${recMsgsStr}`;
     const oldScrollHeight = chatFeedEl ? chatFeedEl.scrollHeight : 0;
     const oldScrollTop = chatFeedEl ? chatFeedEl.scrollTop : 0;
 
+    isProgrammaticScroll = true;
+
     chatFeedEl.innerHTML = '';
 
     const hasMoreOlder = activeMessagesList.length > displayedMessageCount;
@@ -3627,6 +3629,10 @@ ${recMsgsStr}`;
     } else {
       chatFeedEl.scrollTop = oldScrollTop;
     }
+
+    setTimeout(() => {
+      isProgrammaticScroll = false;
+    }, 100);
   }
 
   function loadOlderMessages() {
@@ -4351,8 +4357,9 @@ ${recMsgsStr}`;
         displayedMessageCount++;
       }
     } finally {
+      isProgrammaticScroll = true;
       const state = activeStreamingState[personaId];
-      if (state && state.bubbleEl && document.body.contains(state.bubbleEl)) {
+      if (state && state.bubbleEl && document.body.contains(state.bubbleEl) && activePersonaId !== personaId) {
         state.bubbleEl.remove();
       }
       delete activeStreamingState[personaId];
@@ -4363,6 +4370,9 @@ ${recMsgsStr}`;
         updateHeaderStatus(personaId);
       }
       renderContactList(LocalDB.getPersonas());
+      setTimeout(() => {
+        isProgrammaticScroll = false;
+      }, 100);
     }
   }
 

@@ -577,13 +577,61 @@ body, html {
 
 /* Ephemeral / Ghost Streaming Message Bubble */
 .message-bubble.streaming-ghost {
-  opacity: 0.95;
+  opacity: 0.98;
+  border-left: 3px solid var(--accent-green) !important;
+  box-shadow: 0 0 12px rgba(0, 168, 132, 0.18), 0 1px 3px rgba(0, 0, 0, 0.2);
+  animation: streamingBubblePulse 2s infinite ease-in-out;
+  position: relative;
+}
+
+@keyframes streamingBubblePulse {
+  0% {
+    border-left-color: var(--accent-green);
+    box-shadow: 0 0 8px rgba(0, 168, 132, 0.15), 0 1px 3px rgba(0, 0, 0, 0.2);
+  }
+  50% {
+    border-left-color: var(--accent-green-hover);
+    box-shadow: 0 0 18px rgba(0, 168, 132, 0.35), 0 2px 6px rgba(0, 0, 0, 0.3);
+  }
+  100% {
+    border-left-color: var(--accent-green);
+    box-shadow: 0 0 8px rgba(0, 168, 132, 0.15), 0 1px 3px rgba(0, 0, 0, 0.2);
+  }
+}
+
+.message-bubble.streaming-ghost .message-text::after {
+  content: '▋';
+  display: inline-block;
+  margin-left: 4px;
+  font-size: 0.85em;
+  color: var(--accent-green);
+  vertical-align: baseline;
+  animation: streamingCursor 0.8s infinite ease-in-out;
+}
+
+@keyframes streamingCursor {
+  0%, 100% { opacity: 1; transform: scaleY(1); }
+  50% { opacity: 0.25; transform: scaleY(0.85); }
+}
+
+.message-bubble.streaming-ghost .message-meta::before {
+  content: '● generating...';
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--accent-green);
+  margin-right: 6px;
+  letter-spacing: 0.2px;
+  animation: streamingTextPulse 1.5s infinite ease-in-out;
+}
+
+@keyframes streamingTextPulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
 }
 
 .message-bubble.streaming-ghost .message-actions-toolbar {
   display: none !important;
 }
-
 /* Footer / Input Bar */
 .chat-footer {
   padding: 10px 16px;
