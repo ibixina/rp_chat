@@ -4215,7 +4215,7 @@ ${recMsgsStr}`;
     await generatePersonaResponse(targetPersonaId);
   }
 
-  async function generatePersonaResponse(personaId, overridePromptMessages = null, customInstruction = '') {
+  async function generatePersonaResponse(personaId, overridePromptMessages = null, customInstruction = '', retiringBubble = null) {
     if (generatingPersonas[personaId]) return;
     generatingPersonas[personaId] = true;
 
@@ -4281,6 +4281,7 @@ ${recMsgsStr}`;
         : '';
       const promptMessages = overridePromptMessages || preparePromptMessages(persona, messages, settings, extraSteering);
 
+      let retireChunkCount = 0;
       assistantText = await streamAiCompletion(promptMessages, settings, (chunkText) => {
         const state = activeStreamingState[personaId];
         if (state) {
@@ -4314,6 +4315,19 @@ ${recMsgsStr}`;
               textEl.innerHTML = formatMessageText(currentRaw);
             }
           }
+
+          // Fade out retiring bubble as new response streams in
+          if (retiringBubble && document.body.contains(retiringBubble)) {
+            retireChunkCount++;
+            // Fade from 0.85 → 0.05 over first ~30 chunks
+            const fadeProgress = Math.min(retireChunkCount / 30, 1);
+            const opacity = 0.85 - fadeProgress * 0.82;
+            retiringBubble.style.opacity = opacity.toFixed(3);
+            // Slight upward drift as it fades
+            const translateY = fadeProgress * -8;
+            retiringBubble.style.transform = `translateY(${translateY.toFixed(1)}px)`;
+          }
+
           scrollToBottomIfNearBottom();
         }
       });
@@ -4365,11 +4379,18 @@ ${recMsgsStr}`;
       delete activeStreamingState[personaId];
       generatingPersonas[personaId] = false;
       removeTypingIndicator();
+
+      // Remove retiring bubble — already faded to near-invisible during streaming
+      if (retiringBubble && document.body.contains(retiringBubble)) {
+        retiringBubble.remove();
+      }
+
       if (activePersonaId === personaId) {
         renderCurrentMessageBatch();
         updateHeaderStatus(personaId);
       }
       renderContactList(LocalDB.getPersonas());
+
       setTimeout(() => {
         isProgrammaticScroll = false;
       }, 100);
@@ -4380,6 +4401,12 @@ ${recMsgsStr}`;
     const targetPersonaId = activePersonaId;
     if (!targetPersonaId || generatingPersonas[targetPersonaId]) return;
 
+    // Capture the old bubble before clearing messages so we can animate it out
+    const oldBubble = document.getElementById(msgId);
+    if (oldBubble) {
+      oldBubble.classList.add('retiring-bubble');
+    }
+
     const msgs = LocalDB.getMessages(targetPersonaId);
     const targetIdx = msgs.findIndex(m => m.id === msgId);
     if (targetIdx > -1) {
@@ -4387,8 +4414,11 @@ ${recMsgsStr}`;
       LocalDB.setMessages(targetPersonaId, newMsgs);
     }
 
-    renderChatFeed(targetPersonaId);
-    await generatePersonaResponse(targetPersonaId, null, customInstruction);
+    // Update displayed list without wiping the DOM (old bubble stays for animation)
+    activeMessagesList = LocalDB.getMessages(targetPersonaId) || [];
+    displayedMessageCount = Math.min(displayedMessageCount, activeMessagesList.length);
+
+    await generatePersonaResponse(targetPersonaId, null, customInstruction, oldBubble || null);
   }
   async function generateResponseForUserMessage(msgId) {
     const targetPersonaId = activePersonaId;

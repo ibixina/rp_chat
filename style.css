@@ -575,6 +575,14 @@ body, html {
   color: #53bdeb;
 }
 
+/* Retiring bubble — old response fading out during regeneration */
+.message-bubble.retiring-bubble {
+  transition: opacity 0.35s ease, transform 0.35s ease;
+  pointer-events: none;
+  will-change: opacity, transform;
+}
+
+
 /* Ephemeral / Ghost Streaming Message Bubble */
 .message-bubble.streaming-ghost {
   opacity: 0.98;
