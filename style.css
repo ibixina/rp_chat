@@ -575,11 +575,13 @@ body, html {
   color: #53bdeb;
 }
 
-/* Retiring bubble — old response fading out during regeneration */
-.message-bubble.retiring-bubble {
-  transition: opacity 0.35s ease, transform 0.35s ease;
-  pointer-events: none;
-  will-change: opacity, transform;
+/* Overwrite ghost — remaining old text shown dimly as new response overwrites it */
+.overwrite-ghost {
+  opacity: 0.28;
+  color: var(--text-secondary, #8696a0);
+  font-style: italic;
+  transition: opacity 0.15s ease;
+  white-space: pre-wrap;
 }
 
 

@@ -4215,7 +4215,7 @@ ${recMsgsStr}`;
     await generatePersonaResponse(targetPersonaId);
   }
 
-  async function generatePersonaResponse(personaId, overridePromptMessages = null, customInstruction = '', retiringBubble = null) {
+  async function generatePersonaResponse(personaId, overridePromptMessages = null, customInstruction = '', retiringBubble = null, oldRawText = '') {
     if (generatingPersonas[personaId]) return;
     generatingPersonas[personaId] = true;
 
@@ -4273,6 +4273,12 @@ ${recMsgsStr}`;
     };
     let assistantText = '';
 
+    // Pre-assign retiring bubble as stream target so chunk 1 hits it directly
+    if (retiringBubble && document.body.contains(retiringBubble)) {
+      retiringBubble.classList.add('streaming-ghost');
+      activeStreamingState[personaId].bubbleEl = retiringBubble;
+    }
+
     try {
       const settings = LocalDB.getSettings();
       const messages = LocalDB.getMessages(personaId);
@@ -4281,7 +4287,6 @@ ${recMsgsStr}`;
         : '';
       const promptMessages = overridePromptMessages || preparePromptMessages(persona, messages, settings, extraSteering);
 
-      let retireChunkCount = 0;
       assistantText = await streamAiCompletion(promptMessages, settings, (chunkText) => {
         const state = activeStreamingState[personaId];
         if (state) {
@@ -4312,20 +4317,16 @@ ${recMsgsStr}`;
             if (textEl) {
               const currentRaw = state ? state.fullText : ((textEl.dataset.rawText || '') + chunkText);
               textEl.dataset.rawText = currentRaw;
-              textEl.innerHTML = formatMessageText(currentRaw);
-            }
-          }
 
-          // Fade out retiring bubble as new response streams in
-          if (retiringBubble && document.body.contains(retiringBubble)) {
-            retireChunkCount++;
-            // Fade from 0.85 → 0.05 over first ~30 chunks
-            const fadeProgress = Math.min(retireChunkCount / 30, 1);
-            const opacity = 0.85 - fadeProgress * 0.82;
-            retiringBubble.style.opacity = opacity.toFixed(3);
-            // Slight upward drift as it fades
-            const translateY = fadeProgress * -8;
-            retiringBubble.style.transform = `translateY(${translateY.toFixed(1)}px)`;
+              // Overwrite effect: show new text, ghost any remaining old text not yet reached
+              if (oldRawText && currentRaw.length < oldRawText.length) {
+                const remaining = oldRawText.slice(currentRaw.length);
+                textEl.innerHTML = formatMessageText(currentRaw) +
+                  `<span class="overwrite-ghost">${remaining.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</span>`;
+              } else {
+                textEl.innerHTML = formatMessageText(currentRaw);
+              }
+            }
           }
 
           scrollToBottomIfNearBottom();
@@ -4380,10 +4381,6 @@ ${recMsgsStr}`;
       generatingPersonas[personaId] = false;
       removeTypingIndicator();
 
-      // Remove retiring bubble — already faded to near-invisible during streaming
-      if (retiringBubble && document.body.contains(retiringBubble)) {
-        retiringBubble.remove();
-      }
 
       if (activePersonaId === personaId) {
         renderCurrentMessageBatch();
@@ -4396,29 +4393,26 @@ ${recMsgsStr}`;
       }, 100);
     }
   }
-
   async function retryMessage(msgId, customInstruction = '') {
     const targetPersonaId = activePersonaId;
     if (!targetPersonaId || generatingPersonas[targetPersonaId]) return;
 
-    // Capture the old bubble before clearing messages so we can animate it out
+    // Grab old bubble and its raw text before clearing DB — bubble stays in DOM for overwrite effect
     const oldBubble = document.getElementById(msgId);
-    if (oldBubble) {
-      oldBubble.classList.add('retiring-bubble');
-    }
+    const oldTextEl = oldBubble?.querySelector('.message-text');
+    const oldRawText = oldTextEl?.dataset.rawText || oldTextEl?.textContent || '';
 
     const msgs = LocalDB.getMessages(targetPersonaId);
     const targetIdx = msgs.findIndex(m => m.id === msgId);
     if (targetIdx > -1) {
-      const newMsgs = msgs.slice(0, targetIdx);
-      LocalDB.setMessages(targetPersonaId, newMsgs);
+      LocalDB.setMessages(targetPersonaId, msgs.slice(0, targetIdx));
     }
 
-    // Update displayed list without wiping the DOM (old bubble stays for animation)
+    // Sync list state without wiping the DOM
     activeMessagesList = LocalDB.getMessages(targetPersonaId) || [];
     displayedMessageCount = Math.min(displayedMessageCount, activeMessagesList.length);
 
-    await generatePersonaResponse(targetPersonaId, null, customInstruction, oldBubble || null);
+    await generatePersonaResponse(targetPersonaId, null, customInstruction, oldBubble || null, oldRawText);
   }
   async function generateResponseForUserMessage(msgId) {
     const targetPersonaId = activePersonaId;
