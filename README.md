@@ -23,15 +23,15 @@ The app is fully client-side: a single static page that talks directly to the AI
 
 Main chat view:
 
-![Chat view](docs/screenshots/chat.png)
+![Chat view](docs/screenshots/chat-view.png)
 
 Per-persona editor with system prompt, memory prompt, and end instruction:
 
-![Persona editor](docs/screenshots/persona-editor.png)
+![Persona editor](docs/screenshots/persona-editor-view.png)
 
 AI provider and generation settings:
 
-![Settings](docs/screenshots/settings.png)
+![Settings](docs/screenshots/settings-modal.png)
 
 ## Getting started
 
