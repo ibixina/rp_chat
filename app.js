@@ -4397,22 +4397,92 @@ ${recMsgsStr}`;
     const targetPersonaId = activePersonaId;
     if (!targetPersonaId || generatingPersonas[targetPersonaId]) return;
 
-    // Grab old bubble and its raw text before clearing DB — bubble stays in DOM for overwrite effect
+    // Grab old bubble and its raw text — bubble stays in DOM for overwrite effect
     const oldBubble = document.getElementById(msgId);
     const oldTextEl = oldBubble?.querySelector('.message-text');
     const oldRawText = oldTextEl?.dataset.rawText || oldTextEl?.textContent || '';
 
     const msgs = LocalDB.getMessages(targetPersonaId);
     const targetIdx = msgs.findIndex(m => m.id === msgId);
-    if (targetIdx > -1) {
-      LocalDB.setMessages(targetPersonaId, msgs.slice(0, targetIdx));
-    }
+    if (targetIdx === -1) return;
+
+    const originalMsg = msgs[targetIdx];
+
+    // Crash-safe backup: if page reloads mid-generation, restore the original message.
+    // Key includes personaId so multiple personas don't collide.
+    const backupKey = `retry_backup_${targetPersonaId}`;
+    try {
+      localStorage.setItem(backupKey, JSON.stringify({
+        personaId: targetPersonaId,
+        originalMsg,
+        // All messages after the retried one are also removed — save them for restore.
+        trailing: msgs.slice(targetIdx + 1)
+      }));
+    } catch (e) {}
+
+    LocalDB.setMessages(targetPersonaId, msgs.slice(0, targetIdx));
 
     // Sync list state without wiping the DOM
     activeMessagesList = LocalDB.getMessages(targetPersonaId) || [];
     displayedMessageCount = Math.min(displayedMessageCount, activeMessagesList.length);
 
-    await generatePersonaResponse(targetPersonaId, null, customInstruction, oldBubble || null, oldRawText);
+    // Remove DOM bubbles that came after the retried message so they don't linger
+    if (oldBubble) {
+      let next = oldBubble.nextElementSibling;
+      while (next) {
+        const toRemove = next;
+        next = next.nextElementSibling;
+        if (toRemove.id !== 'typing-indicator-bubble') toRemove.remove();
+      }
+    }
+
+    try {
+      await generatePersonaResponse(targetPersonaId, null, customInstruction, oldBubble || null, oldRawText);
+    } catch (err) {
+      console.error('retryMessage unexpected error:', err);
+    } finally {
+      // Check if generation produced a replacement (success or error message).
+      const currentMsgs = LocalDB.getMessages(targetPersonaId);
+      const hasReplacement = currentMsgs.some(m => m.timestamp > originalMsg.timestamp);
+      if (!hasReplacement) {
+        // Nothing was saved — restore the original so the conversation isn't lost.
+        LocalDB.addMessage(targetPersonaId, originalMsg);
+        activeMessagesList = LocalDB.getMessages(targetPersonaId) || [];
+        displayedMessageCount = Math.min(displayedMessageCount + 1, activeMessagesList.length);
+      }
+      // Generation finished (success or error) — crash backup no longer needed.
+      try { localStorage.removeItem(backupKey); } catch (e) {}
+    }
+  }
+
+  function restoreRetryBackupsOnLoad() {
+    try {
+      const keysToCheck = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith('retry_backup_')) keysToCheck.push(key);
+      }
+      for (const key of keysToCheck) {
+        try {
+          const backup = JSON.parse(localStorage.getItem(key));
+          if (!backup || !backup.personaId || !backup.originalMsg) {
+            localStorage.removeItem(key);
+            continue;
+          }
+          const { personaId, originalMsg } = backup;
+          const currentMsgs = LocalDB.getMessages(personaId) || [];
+          // If a newer message exists, generation succeeded before the crash — discard backup.
+          const hasReplacement = currentMsgs.some(m => m.timestamp > originalMsg.timestamp);
+          if (!hasReplacement) {
+            // No replacement found — restore the original message.
+            LocalDB.addMessage(personaId, originalMsg);
+          }
+          localStorage.removeItem(key);
+        } catch (e) {
+          try { localStorage.removeItem(key); } catch (_) {}
+        }
+      }
+    } catch (e) {}
   }
   async function generateResponseForUserMessage(msgId) {
     const targetPersonaId = activePersonaId;
@@ -4960,6 +5030,7 @@ ${recMsgsStr}`;
   // -------------------------------------------------------------
   async function init() {
     await LocalDB.init();
+    restoreRetryBackupsOnLoad();
     const settings = LocalDB.getSettings();
     applyTheme(settings.theme || 'whatsapp-dark');
     loadSettingsIntoUI();
