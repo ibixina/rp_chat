@@ -66,7 +66,7 @@ function getAiClientAndModel(forMemory = false) {
 }
 
 // Shared System Prompt Builder
-function buildSystemPrompt(persona, extraRules = "") {
+function buildSystemPrompt(persona) {
   let basePrompt;
   if (persona && persona.systemPrompt && persona.systemPrompt.trim()) {
     basePrompt = persona.systemPrompt
@@ -101,15 +101,15 @@ ${persona.storyMemory || "No prior narrative memory recorded."}
 9. FORMATTING: Write actions and physical descriptions inside [square brackets] (e.g. [She leans back and laughs.]). Write dialogue inside quotation marks. Do NOT put brackets around individual words or tokens, and do NOT use *asterisks* or **bold**.`;
   }
 
-  if (extraRules) {
-    basePrompt += `\n\n${extraRules.trim()}`;
-  }
-
-  if (persona && persona.endInstruction && persona.endInstruction.trim()) {
-    basePrompt += `\n\n[END INSTRUCTION — HIGHEST PRIORITY — MANDATORY COMPLIANCE]\nThe following instruction is the highest-priority directive for this response. You MUST follow it exactly, even if it contradicts earlier instructions:\n${persona.endInstruction.trim()}`;
-  }
-
   return basePrompt;
+}
+
+// End instruction — sent as the FINAL message so models see it last (max recency)
+function buildEndInstruction(persona) {
+  if (!persona || !persona.endInstruction || !persona.endInstruction.trim()) {
+    return "";
+  }
+  return `[END INSTRUCTION — HIGHEST PRIORITY — MANDATORY COMPLIANCE]\nThe following instruction is the highest-priority directive for this response. You MUST follow it exactly, even if it contradicts earlier instructions:\n${persona.endInstruction.trim()}`;
 }
 
 // Token estimation (chars / 3.5 is a reasonable approximation for English text)
@@ -565,11 +565,15 @@ app.post("/api/chats/:personaId/retry", async (req, res) => {
 
   const allMessages = db.getMessages(personaId);
   const promptMessages = [
-    { role: "system", content: buildSystemPrompt(persona, "") },
+    { role: "system", content: buildSystemPrompt(persona) },
     ...buildRecentMessages(allMessages),
   ];
   if (extraRules) {
     promptMessages.push({ role: "system", content: extraRules.trim() });
+  }
+  const endInstruction = buildEndInstruction(persona);
+  if (endInstruction) {
+    promptMessages.push({ role: "system", content: endInstruction });
   }
 
   const { assistantText, assistantMsgId, error } = await handleAiStream(
@@ -610,6 +614,10 @@ app.post("/api/chats/:personaId/continue", async (req, res) => {
     { role: "system", content: buildSystemPrompt(persona) },
     ...buildRecentMessages(allMessages),
   ];
+  const endInstruction = buildEndInstruction(persona);
+  if (endInstruction) {
+    promptMessages.push({ role: "system", content: endInstruction });
+  }
 
   const { assistantText, assistantMsgId, error } = await handleAiStream(
     res,
@@ -665,7 +673,7 @@ app.post(
       "\n7. CONTINUATION DIRECTIVE: Seamlessly continue the narrative of your last message. Pick up exactly where your previous sentence ended without repeating text.";
 
     const promptMessages = [
-      { role: "system", content: buildSystemPrompt(persona, "") },
+      { role: "system", content: buildSystemPrompt(persona) },
       ...recentMessages,
       { role: "system", content: extraRules.trim() },
       {
@@ -674,6 +682,10 @@ app.post(
           "[Continue your previous response naturally, adding more detail and continuing the action.]",
       },
     ];
+    const endInstruction = buildEndInstruction(persona);
+    if (endInstruction) {
+      promptMessages.push({ role: "system", content: endInstruction });
+    }
 
     const { assistantText, error } = await handleAiStream(
       res,
@@ -741,6 +753,10 @@ app.post("/api/chats/:personaId/stream", async (req, res) => {
     { role: "system", content: buildSystemPrompt(persona) },
     ...buildRecentMessages(allMessages),
   ];
+  const endInstruction = buildEndInstruction(persona);
+  if (endInstruction) {
+    promptMessages.push({ role: "system", content: endInstruction });
+  }
 
   const { assistantText, assistantMsgId, error } = await handleAiStream(
     res,

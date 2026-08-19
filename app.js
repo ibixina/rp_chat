@@ -1401,7 +1401,7 @@ EXISTING MEMORY:
 RECENT MESSAGES:
 \${recentMessages}`;
 
-  function buildSystemPrompt(persona, extraRules = '') {
+  function buildSystemPrompt(persona) {
     let basePrompt;
     if (persona && persona.systemPrompt && persona.systemPrompt.trim()) {
       let custom = persona.systemPrompt
@@ -1438,15 +1438,13 @@ ${persona.storyMemory || "No prior narrative memory recorded."}
 9. FORMATTING: Write actions and physical descriptions inside [square brackets] (e.g. [She leans back and laughs.]). Write dialogue inside quotation marks. Do NOT put brackets around individual words or tokens, and do NOT use *asterisks* or **bold**.`;
     }
 
-    if (extraRules) {
-      basePrompt += `\n\n${extraRules.trim()}`;
-    }
-
-    if (persona && persona.endInstruction && persona.endInstruction.trim()) {
-      basePrompt += `\n\n[END INSTRUCTION — HIGHEST PRIORITY — MANDATORY COMPLIANCE]\nThe following instruction is the highest-priority directive for this response. You MUST follow it exactly, even if it contradicts earlier instructions:\n${persona.endInstruction.trim()}`;
-    }
-
     return basePrompt;
+  }
+
+  // End instruction — sent as the FINAL message so models see it last (max recency)
+  function buildEndInstruction(persona) {
+    if (!persona || !persona.endInstruction || !persona.endInstruction.trim()) return '';
+    return `[END INSTRUCTION — HIGHEST PRIORITY — MANDATORY COMPLIANCE]\nThe following instruction is the highest-priority directive for this response. You MUST follow it exactly, even if it contradicts earlier instructions:\n${persona.endInstruction.trim()}`;
   }
 
   function estimateTokens(text) {
@@ -1454,12 +1452,14 @@ ${persona.storyMemory || "No prior narrative memory recorded."}
   }
 
   function preparePromptMessages(persona, messages, settings, extraRules = '') {
-    const sysPrompt = buildSystemPrompt(persona, '');
+    const endInstruction = buildEndInstruction(persona);
+    const sysPrompt = buildSystemPrompt(persona);
     const sysTokens = estimateTokens(sysPrompt);
     const extraTokens = extraRules ? estimateTokens(extraRules) : 0;
+    const endTokens = endInstruction ? estimateTokens(endInstruction) : 0;
     const budget = settings.contextBudget || 6000;
     const maxHistory = settings.maxMessageHistory !== undefined ? parseInt(settings.maxMessageHistory, 10) : 30;
-    let availableBudget = Math.max(budget - sysTokens - extraTokens - 500, 1000);
+    let availableBudget = Math.max(budget - sysTokens - extraTokens - endTokens - 500, 1000);
 
     const formattedMessages = [];
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -1482,6 +1482,9 @@ ${persona.storyMemory || "No prior narrative memory recorded."}
     const finalMessages = [{ role: 'system', content: sysPrompt }, ...formattedMessages];
     if (extraRules) {
       finalMessages.push({ role: 'system', content: extraRules.trim() });
+    }
+    if (endInstruction) {
+      finalMessages.push({ role: 'system', content: endInstruction });
     }
     return finalMessages;
   }
