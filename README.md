@@ -1,8 +1,8 @@
 # Persona Chat
 
-WhatsApp/Signal-style roleplay messenger with AI personas. Each contact is a character with its own system prompt, persistent story memory, and generation settings. Chat is streamed live from OpenRouter or DeepInfra.
+WhatsApp/Signal-style roleplay messenger with AI personas. Each contact is a character with its own system prompt, persistent story memory, and generation settings. Chat is streamed live from OpenRouter, DeepInfra, or signed-in Gemini/DeepSeek web tabs through the companion browser extension.
 
-The app is fully client-side: a single static page that talks directly to the AI providers from your browser. There is no backend to run, which means it can be hosted anywhere — including GitHub Pages. All data (personas, chats, settings, API keys) is stored in your browser's IndexedDB.
+The app is fully client-side and can be hosted on GitHub Pages. Persona data, chats, settings, and API keys remain in the browser's IndexedDB; the extension leaves Gemini/DeepSeek login cookies inside their provider tabs.
 
 ## Features
 
@@ -13,7 +13,7 @@ The app is fully client-side: a single static page that talks directly to the AI
 - **End Instruction** — a per-persona "highest priority" directive that is sent as the **final message of the prompt**, giving it maximum recency weight over everything else
 - **Story Memory Log** — automatic narrative summarization every 12 messages, editable at any time; keeps long-running roleplay physically and emotionally continuous without blowing the context window
 - **Regenerate with instruction** — retry any AI response, optionally with a custom steering instruction (e.g. "be more sarcastic"); streaming overwrite replaces the old bubble in place
-- **Two providers, any model string** — OpenRouter or DeepInfra API keys, built-in model presets, or a custom model ID per provider; the memory engine can run on a separate (cheaper/free) route
+- **Three provider routes, any model string** — OpenRouter, DeepInfra, or signed-in Gemini/DeepSeek web tabs through the browser extension; the memory engine can inherit the persona route or use a separate API provider
 - **Full generation controls** — temperature, frequency/presence/repetition penalties, context budget, max message history, max output tokens
 - **Multi-device E2EE sync** — QR code or link pairing; all data is AES-GCM encrypted in the browser before it leaves the device
 - **Export / import** — full app backup JSON, per-chat JSON export, persona/chat JSON import, restore; reset storage
@@ -35,19 +35,37 @@ AI provider and generation settings:
 
 ## Getting started
 
-You need an API key from at least one provider:
+OpenRouter and DeepInfra require an API key:
 
 - **OpenRouter** — https://openrouter.ai/keys
 - **DeepInfra** — https://deepinfra.com/dash/api_keys
+
+The **Web Chat Bridge** route does not require a model API key or local server. It uses the companion browser extension to control your existing signed-in Gemini or DeepSeek tab.
 
 The default model is `sao10k/l3.3-euryale-70b` on OpenRouter (uncensored roleplay-tuned) with `NousResearch/Hermes-3-Llama-3.1-70B` on DeepInfra. The default memory model is the free `nvidia/nemotron-3-ultra-550b-a55b:free`.
 
 1. Open the app (hosted or local — see below).
 2. Click the profile icon (top-left) to open **AI Provider & Model Settings**.
-3. Paste your OpenRouter and/or DeepInfra API key, pick a provider and model.
+3. Pick a provider and model. Enter API credentials for OpenRouter/DeepInfra, or install the one-time browser extension for **Web Chat Bridge**.
 4. Tap **+** in the sidebar to create a persona, open a chat, and send a message.
 
-Keys are stored only in your browser's local storage and sent only to the provider you selected — never to any other server.
+Provider API keys are stored in IndexedDB and sent only to the selected provider. The extension does not copy provider login cookies into Persona Chat.
+
+### Using Gemini or DeepSeek web access
+
+GitHub Pages cannot read another site's login session directly. The included Manifest V3 browser extension supplies that browser capability without a localhost process or copied cookies.
+
+One-time Chromium/Brave setup:
+
+1. Clone or download this repository.
+2. Open `chrome://extensions` in Chrome or `brave://extensions` in Brave.
+3. Enable **Developer mode**, click **Load unpacked**, and select this repository's `extension/` directory.
+4. Open [Gemini](https://gemini.google.com/) or [DeepSeek](https://chat.deepseek.com/) and log in normally.
+5. In Persona Chat select **Web Chat Bridge**, choose the provider, and save.
+
+Persona Chat detects the extension automatically. A signed-in provider tab remains open as an inactive authentication context, but prompts are not inserted into its interface. The extension calls the provider's private web endpoint and streams the result directly to Persona Chat. If no provider tab exists, it opens the login page and asks you to retry after signing in.
+
+The extension is restricted to `https://ibixina.github.io/rp_chat/`, localhost development pages, Gemini, DeepSeek, and DeepSeek's proof-of-work asset host. These private endpoints are undocumented and can break without notice. Their automated use may conflict with [DeepSeek's Terms of Use](https://cdn.deepseek.com/policies/en-US/deepseek-terms-of-use.html) or [Google's Terms of Service](https://policies.google.com/terms). Provider-side capacity and account limits still apply.
 
 ### Hosting on GitHub Pages
 
@@ -56,7 +74,7 @@ This repo already ships a deploy workflow (`.github/workflows/deploy.yml`): ever
 1. On GitHub: **Settings → Pages → Build and deployment → Source: GitHub Actions**.
 2. Push to `main`. The workflow uploads the whole repo root — `index.html`, `app.js`, `style.css`, `manifest.json`, `uploads/` — and deploys.
 
-Nothing else is required: the page calls OpenRouter/DeepInfra directly from the browser (both providers are CORS-enabled), and data lives in the visitor's own IndexedDB.
+Nothing else is required for OpenRouter/DeepInfra. The Web Chat Bridge requires only the one-time extension install; it does not require a running local companion.
 
 ### Running locally
 
@@ -164,6 +182,7 @@ index.html          app shell + all modals
 style.css           themes and UI styling
 app.js              entire client: storage, prompt builder, streaming, sync, UI
 manifest.json       PWA manifest
+extension/          Manifest V3 bridge for signed-in Gemini/DeepSeek tabs
 uploads/            avatar images (default-avatar.svg is committed)
 docs/screenshots/   README screenshots
 server.js           optional Express backend (self-hosting only)
@@ -174,4 +193,4 @@ import-perchance.js Node script to convert Perchance character exports into app 
 
 ## Tech stack
 
-Vanilla JavaScript (no framework, no build step) · IndexedDB + LocalStorage · WebCrypto (AES-GCM) · SSE streaming chat completions · OpenRouter & DeepInfra APIs · QRCode.js + html5-qrcode · Font Awesome · GitHub Pages.
+Vanilla JavaScript (no framework, no build step) · IndexedDB + LocalStorage · WebCrypto (AES-GCM) · SSE streaming chat completions · OpenRouter and DeepInfra APIs · Gemini/DeepSeek browser-extension bridge · QRCode.js + html5-qrcode · Font Awesome · GitHub Pages.

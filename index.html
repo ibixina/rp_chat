@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover, interactive-widget=resizes-content">
+  <meta name="persona-chat-app" content="true">
   <title>Messages</title>
   <!-- Mobile & PWA Fullscreen Meta Tags -->
   <meta name="mobile-web-app-capable" content="yes">
@@ -330,7 +331,25 @@
               <div class="provider-title"><i class="fa-solid fa-bolt"></i> DeepInfra</div>
               <div class="provider-desc">Direct high-speed completion engine for Hermes-3 70B & Llama models.</div>
             </label>
+            <label class="provider-card" id="card-webbridge">
+              <input type="radio" name="provider" value="webbridge" style="display:none;">
+              <div class="provider-title"><i class="fa-solid fa-window-restore"></i> Web Chat Bridge</div>
+              <div class="provider-desc">Use your signed-in Gemini or DeepSeek tab through the browser extension.</div>
+            </label>
           </div>
+        </div>
+
+        <div class="form-group" id="web-bridge-settings-group" style="display: none; padding: 12px; border: 1px solid var(--border-color); border-radius: 8px;">
+          <label for="settings-web-bridge-kind">Web Chat Service</label>
+          <select id="settings-web-bridge-kind" class="form-control">
+            <option value="deepseek">DeepSeek Web</option>
+            <option value="gemini">Gemini Web</option>
+          </select>
+          <span id="web-bridge-status" style="display: block; font-size: 11px; color: var(--text-muted);">Checking extension...</span>
+          <button type="button" class="btn btn-secondary" id="btn-open-web-login" style="align-self: flex-start;">
+            <i class="fa-solid fa-arrow-up-right-from-square"></i> Open Web Chat Login
+          </button>
+          <span style="display: block; font-size: 11px; color: var(--text-muted);">No localhost process or copied cookies. The extension calls the provider's private web endpoint from a signed-in background tab; it does not type prompts into the visible interface.</span>
         </div>
 
         <div class="form-group">

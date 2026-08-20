@@ -212,8 +212,22 @@ document.addEventListener('DOMContentLoaded', () => {
     getSettings() {
       const raw = this.getRaw();
       const rawSet = raw.settings || {};
+      const webBridgeKind = rawSet.webBridgeKind === 'gemini' ? 'gemini' : 'deepseek';
+      if (
+        'webBridgeUrl' in rawSet ||
+        'webBridgeKey' in rawSet ||
+        rawSet.webBridgeKind !== webBridgeKind
+      ) {
+        delete rawSet.webBridgeUrl;
+        delete rawSet.webBridgeKey;
+        rawSet.webBridgeKind = webBridgeKind;
+        raw.settings = rawSet;
+        this.saveRaw(raw);
+      }
       const provider = (rawSet.provider || 'openrouter').toLowerCase();
-      const model = rawSet.model || (provider === 'deepinfra' ? 'NousResearch/Hermes-3-Llama-3.1-70B' : 'sao10k/l3.3-euryale-70b');
+      const model = rawSet.model || (provider === 'deepinfra'
+        ? 'NousResearch/Hermes-3-Llama-3.1-70B'
+        : provider === 'webbridge' ? 'deepseek-chat' : 'sao10k/l3.3-euryale-70b');
       const memoryProvider = (rawSet.memoryProvider || 'inherit').toLowerCase();
       const memoryModel = rawSet.memoryModel || 'nvidia/nemotron-3-ultra-550b-a55b:free';
 
@@ -223,6 +237,7 @@ document.addEventListener('DOMContentLoaded', () => {
         model: 'sao10k/l3.3-euryale-70b',
         lastOpenRouterModel: rawSet.lastOpenRouterModel || (provider === 'openrouter' ? model : 'sao10k/l3.3-euryale-70b'),
         lastDeepInfraModel: rawSet.lastDeepInfraModel || (provider === 'deepinfra' ? model : 'NousResearch/Hermes-3-Llama-3.1-70B'),
+        lastWebBridgeModel: rawSet.lastWebBridgeModel || (provider === 'webbridge' ? model : 'deepseek-chat'),
         temperature: 0.68,
         frequencyPenalty: 0.65,
         presencePenalty: 0.45,
@@ -237,7 +252,8 @@ document.addEventListener('DOMContentLoaded', () => {
         openrouterKey: '',
         deepinfraKey: '',
         customModels: [],
-        ...rawSet
+        ...rawSet,
+        webBridgeKind
       };
     },
 
@@ -1489,10 +1505,103 @@ ${persona.storyMemory || "No prior narrative memory recorded."}
     return finalMessages;
   }
 
+  function isWebBridgeExtensionAvailable(timeoutMs = 800) {
+    return new Promise(resolve => {
+      const requestId = crypto.randomUUID();
+      let settled = false;
+      const finish = available => {
+        if (settled) return;
+        settled = true;
+        window.removeEventListener('message', onMessage);
+        clearTimeout(timer);
+        resolve(available);
+      };
+      const onMessage = event => {
+        if (
+          event.source === window &&
+          event.data?.source === 'persona-chat-extension' &&
+          event.data?.type === 'pong' &&
+          event.data?.requestId === requestId
+        ) {
+          finish(true);
+        }
+      };
+      const timer = setTimeout(() => finish(false), timeoutMs);
+      window.addEventListener('message', onMessage);
+      window.postMessage({
+        source: 'persona-chat-app',
+        type: 'ping',
+        requestId
+      }, window.location.origin);
+    });
+  }
+
+  async function streamWebChatCompletion(promptMessages, settings, onChunk) {
+    if (!await isWebBridgeExtensionAvailable()) {
+      throw new Error('Persona Chat Web Bridge extension is not installed or enabled. Install it once, then reload this page.');
+    }
+
+    return new Promise((resolve, reject) => {
+      const requestId = crypto.randomUUID();
+      let fullText = '';
+      let timeout;
+
+      const cleanup = () => {
+        clearTimeout(timeout);
+        window.removeEventListener('message', onMessage);
+      };
+      const resetTimeout = () => {
+        clearTimeout(timeout);
+        timeout = setTimeout(() => {
+          cleanup();
+          reject(new Error('The web-chat tab did not respond within three minutes.'));
+        }, 180000);
+      };
+      const onMessage = event => {
+        const data = event.data;
+        if (
+          event.source !== window ||
+          data?.source !== 'persona-chat-extension' ||
+          data?.requestId !== requestId
+        ) return;
+
+        resetTimeout();
+        if (data.type === 'chunk' && data.text) {
+          fullText += data.text;
+          if (onChunk) onChunk(data.text);
+        } else if (data.type === 'done') {
+          cleanup();
+          if (fullText.trim()) resolve(fullText);
+          else reject(new Error('The web-chat tab returned an empty response.'));
+        } else if (data.type === 'error') {
+          cleanup();
+          reject(new Error(data.message || 'The web-chat extension failed.'));
+        }
+      };
+
+      window.addEventListener('message', onMessage);
+      resetTimeout();
+      window.postMessage({
+        source: 'persona-chat-app',
+        type: 'generate',
+        requestId,
+        provider: settings.webBridgeKind || 'deepseek',
+        model: settings.model || 'deepseek-chat',
+        messages: promptMessages
+      }, window.location.origin);
+    });
+  }
+
   async function streamAiCompletion(promptMessages, settings, onChunk, isRetry = false) {
     const provider = (settings.provider || 'openrouter').toLowerCase();
-    const model = settings.model || (provider === 'deepinfra' ? 'NousResearch/Hermes-3-Llama-3.1-70B' : 'sao10k/l3.3-euryale-70b');
-    
+    if (provider === 'webbridge') {
+      return streamWebChatCompletion(promptMessages, settings, onChunk);
+    }
+
+    const model = settings.model || (provider === 'deepinfra'
+      ? 'NousResearch/Hermes-3-Llama-3.1-70B'
+      : 'sao10k/l3.3-euryale-70b');
+
     let apiKey = provider === 'deepinfra' ? settings.deepinfraKey : settings.openrouterKey;
     if (!apiKey) {
       apiKey = settings.openrouterKey || settings.deepinfraKey;
@@ -1528,9 +1637,9 @@ ${persona.storyMemory || "No prior narrative memory recorded."}
         extra_body: {
           repetition_penalty: settings.repetitionPenalty !== undefined ? parseFloat(settings.repetitionPenalty) : 1.18
         }
-      } : {
+      } : provider === 'deepinfra' ? {
         repetition_penalty: settings.repetitionPenalty !== undefined ? parseFloat(settings.repetitionPenalty) : 1.18
-      })
+      } : {})
     };
 
     logEvent('AI_INFERENCE', `Sending stream completion request via ${provider.toUpperCase()}`, { model, temperature: payload.temperature, messageCount: promptMessages.length });
@@ -1727,10 +1836,15 @@ ${persona.storyMemory || "No prior narrative memory recorded."}
     updateMemorySummarizingUI(persona.id);
 
     try {
-      let provider = settings.memoryProvider && settings.memoryProvider !== 'inherit'
+      const usesDedicatedMemoryProvider = settings.memoryProvider && settings.memoryProvider !== 'inherit';
+      const provider = usesDedicatedMemoryProvider
         ? settings.memoryProvider.toLowerCase()
         : (settings.provider || 'openrouter').toLowerCase();
-      let model = settings.memoryModel || (provider === 'deepinfra' ? 'NousResearch/Hermes-3-Llama-3.1-70B' : 'nvidia/nemotron-3-ultra-550b-a55b:free');
+      const model = usesDedicatedMemoryProvider
+        ? (settings.memoryModel || (provider === 'deepinfra' ? 'NousResearch/Hermes-3-Llama-3.1-70B' : 'nvidia/nemotron-3-ultra-550b-a55b:free'))
+        : (settings.model || (provider === 'deepinfra'
+          ? 'NousResearch/Hermes-3-Llama-3.1-70B'
+          : provider === 'webbridge' ? 'deepseek-chat' : 'sao10k/l3.3-euryale-70b'));
 
       logEvent('MEMORY', `Triggering memory auto-summarization for ${persona.name}`, { provider, model, totalTurns: messages.length });
 
@@ -2726,6 +2840,12 @@ ${recMsgsStr}`;
     deepinfra: [
       { value: 'NousResearch/Hermes-3-Llama-3.1-70B', label: 'DeepInfra: NousResearch/Hermes-3-Llama-3.1-70B' },
       { value: 'meta-llama/Llama-3.3-70B-Instruct', label: 'DeepInfra: meta-llama/Llama-3.3-70B-Instruct' }
+    ],
+    webbridge: [
+      { value: 'deepseek-chat', label: 'DeepSeek Web: Chat' },
+      { value: 'deepseek-reasoner', label: 'DeepSeek Web: Reasoner' },
+      { value: 'deepseek-expert', label: 'DeepSeek Web: Expert' },
+      { value: 'gemini-advanced', label: 'Gemini Web: Advanced' }
     ]
   };
 
@@ -2735,7 +2855,11 @@ ${recMsgsStr}`;
     'meta-llama/llama-3.3-70b-instruct',
     'gryphe/mythomax-l2-13b',
     'NousResearch/Hermes-3-Llama-3.1-70B',
-    'meta-llama/Llama-3.3-70B-Instruct'
+    'meta-llama/Llama-3.3-70B-Instruct',
+    'deepseek-chat',
+    'deepseek-reasoner',
+    'deepseek-expert',
+    'gemini-advanced'
   ]);
 
   const OPENROUTER_ONLY_PRESETS = new Set([
@@ -2750,15 +2874,45 @@ ${recMsgsStr}`;
     'meta-llama/Llama-3.3-70B-Instruct'
   ]);
 
+  const WEB_BRIDGE_ONLY_PRESETS = new Set([
+    'deepseek-chat',
+    'deepseek-reasoner',
+    'deepseek-expert',
+    'gemini-advanced'
+  ]);
+
   let settingsProviderModels = {
     openrouter: 'sao10k/l3.3-euryale-70b',
-    deepinfra: 'NousResearch/Hermes-3-Llama-3.1-70B'
+    deepinfra: 'NousResearch/Hermes-3-Llama-3.1-70B',
+    webbridge: 'deepseek-chat'
   };
 
   let settingsMemProviderModels = {
     openrouter: 'nvidia/nemotron-3-ultra-550b-a55b:free',
     deepinfra: 'NousResearch/Hermes-3-Llama-3.1-70B'
   };
+
+  function getActiveChatProvider() {
+    if (document.getElementById('card-webbridge')?.classList.contains('active')) return 'webbridge';
+    if (document.getElementById('card-deepinfra')?.classList.contains('active')) return 'deepinfra';
+    return 'openrouter';
+  }
+
+  function getDefaultProviderModel(provider) {
+    if (provider === 'webbridge') return 'deepseek-chat';
+    if (provider === 'deepinfra') return 'NousResearch/Hermes-3-Llama-3.1-70B';
+    return 'sao10k/l3.3-euryale-70b';
+  }
+
+  function isUnavailablePreset(provider, model) {
+    if (provider === 'webbridge') {
+      return OPENROUTER_ONLY_PRESETS.has(model) || DEEPINFRA_ONLY_PRESETS.has(model);
+    }
+    if (provider === 'deepinfra') {
+      return OPENROUTER_ONLY_PRESETS.has(model) || WEB_BRIDGE_ONLY_PRESETS.has(model);
+    }
+    return DEEPINFRA_ONLY_PRESETS.has(model) || WEB_BRIDGE_ONLY_PRESETS.has(model);
+  }
 
   function getSavedCustomModels() {
     const settings = LocalDB.getSettings();
@@ -2787,7 +2941,7 @@ ${recMsgsStr}`;
 
   function renderCustomModelsInSelects() {
     const customModels = getSavedCustomModels();
-    const activeProv = document.getElementById('card-deepinfra')?.classList.contains('active') ? 'deepinfra' : 'openrouter';
+    const activeProv = getActiveChatProvider();
     
     let activeMemProvCard = 'openrouter';
     if (document.getElementById('card-mem-deepinfra')?.classList.contains('active')) {
@@ -2927,34 +3081,37 @@ ${recMsgsStr}`;
 
     const openrouterKeyInput = document.getElementById('settings-openrouter-key');
     const deepinfraKeyInput = document.getElementById('settings-deepinfra-key');
+    const webBridgeKindInput = document.getElementById('settings-web-bridge-kind');
     if (openrouterKeyInput) openrouterKeyInput.value = settings.openrouterKey || '';
     if (deepinfraKeyInput) deepinfraKeyInput.value = settings.deepinfraKey || '';
+    if (webBridgeKindInput) webBridgeKindInput.value = settings.webBridgeKind || 'deepseek';
 
-    const provider = (settings.provider || 'openrouter').toLowerCase();
-    const cardOpenRouter = document.getElementById('card-openrouter');
-    const cardDeepInfra = document.getElementById('card-deepinfra');
-    if (provider === 'deepinfra') {
-      cardOpenRouter?.classList.remove('active');
-      cardDeepInfra?.classList.add('active');
-      const radio = cardDeepInfra?.querySelector('input[type="radio"]');
-      if (radio) radio.checked = true;
-    } else {
-      cardOpenRouter?.classList.add('active');
-      cardDeepInfra?.classList.remove('active');
-      const radio = cardOpenRouter?.querySelector('input[type="radio"]');
-      if (radio) radio.checked = true;
-    }
+    const storedProvider = (settings.provider || 'openrouter').toLowerCase();
+    const provider = PROVIDER_PRESET_MODELS[storedProvider] ? storedProvider : 'openrouter';
+    ['openrouter', 'deepinfra', 'webbridge'].forEach(candidate => {
+      const card = document.getElementById(`card-${candidate}`);
+      const isActive = candidate === provider;
+      card?.classList.toggle('active', isActive);
+      const radio = card?.querySelector('input[type="radio"]');
+      if (radio) radio.checked = isActive;
+    });
+    const webBridgeSettingsGroup = document.getElementById('web-bridge-settings-group');
+    if (webBridgeSettingsGroup) webBridgeSettingsGroup.style.display = provider === 'webbridge' ? 'flex' : 'none';
+    if (provider === 'webbridge') updateWebBridgeStatus();
 
     let openrouterModel = settings.lastOpenRouterModel || (provider === 'openrouter' ? settings.model : 'sao10k/l3.3-euryale-70b');
-    if (DEEPINFRA_ONLY_PRESETS.has(openrouterModel)) openrouterModel = 'sao10k/l3.3-euryale-70b';
+    if (isUnavailablePreset('openrouter', openrouterModel)) openrouterModel = getDefaultProviderModel('openrouter');
     settingsProviderModels.openrouter = openrouterModel;
 
     let deepinfraModel = settings.lastDeepInfraModel || (provider === 'deepinfra' ? settings.model : 'NousResearch/Hermes-3-Llama-3.1-70B');
-    if (OPENROUTER_ONLY_PRESETS.has(deepinfraModel)) deepinfraModel = 'NousResearch/Hermes-3-Llama-3.1-70B';
+    if (isUnavailablePreset('deepinfra', deepinfraModel)) deepinfraModel = getDefaultProviderModel('deepinfra');
     settingsProviderModels.deepinfra = deepinfraModel;
 
-    const currentActiveModel = settingsProviderModels[provider] || (provider === 'deepinfra' ? 'NousResearch/Hermes-3-Llama-3.1-70B' : 'sao10k/l3.3-euryale-70b');
-    setModelUI(currentActiveModel);
+    let webBridgeModel = settings.lastWebBridgeModel || (provider === 'webbridge' ? settings.model : 'deepseek-chat');
+    if (isUnavailablePreset('webbridge', webBridgeModel)) webBridgeModel = getDefaultProviderModel('webbridge');
+    settingsProviderModels.webbridge = webBridgeModel;
+
+    setModelUI(settingsProviderModels[provider] || getDefaultProviderModel(provider));
 
     document.getElementById('settings-temp').value = settings.temperature !== undefined ? settings.temperature : 0.68;
     document.getElementById('temp-val-display').textContent = settings.temperature !== undefined ? settings.temperature : 0.68;
@@ -3069,40 +3226,73 @@ ${recMsgsStr}`;
   // Provider Selection Event Listeners in Settings
   const cardOpenRouter = document.getElementById('card-openrouter');
   const cardDeepInfra = document.getElementById('card-deepinfra');
+  const cardWebBridge = document.getElementById('card-webbridge');
+  const webBridgeSettingsGroup = document.getElementById('web-bridge-settings-group');
+
+  async function updateWebBridgeStatus() {
+    const statusEl = document.getElementById('web-bridge-status');
+    if (!statusEl) return;
+    statusEl.textContent = 'Checking extension...';
+    const available = await isWebBridgeExtensionAvailable();
+    statusEl.textContent = available
+      ? 'Extension detected. The selected web chat will open automatically when needed.'
+      : 'Extension not detected. Install it once and reload this page.';
+    statusEl.style.color = available ? 'var(--accent-green)' : '#ea4335';
+  }
 
   function switchProvider(newProvider) {
-    const currentProvider = cardDeepInfra?.classList.contains('active') ? 'deepinfra' : 'openrouter';
+    const currentProvider = getActiveChatProvider();
     if (currentProvider === newProvider) return;
 
     settingsProviderModels[currentProvider] = getModelFromUI();
 
-    if (newProvider === 'deepinfra') {
-      cardOpenRouter?.classList.remove('active');
-      cardDeepInfra?.classList.add('active');
-      const radio = cardDeepInfra?.querySelector('input[type="radio"]');
-      if (radio) radio.checked = true;
-    } else {
-      cardOpenRouter?.classList.add('active');
-      cardDeepInfra?.classList.remove('active');
-      const radio = cardOpenRouter?.querySelector('input[type="radio"]');
-      if (radio) radio.checked = true;
+    [
+      ['openrouter', cardOpenRouter],
+      ['deepinfra', cardDeepInfra],
+      ['webbridge', cardWebBridge]
+    ].forEach(([provider, card]) => {
+      const isActive = provider === newProvider;
+      card?.classList.toggle('active', isActive);
+      const radio = card?.querySelector('input[type="radio"]');
+      if (radio) radio.checked = isActive;
+    });
+    if (webBridgeSettingsGroup) {
+      webBridgeSettingsGroup.style.display = newProvider === 'webbridge' ? 'flex' : 'none';
     }
+    if (newProvider === 'webbridge') updateWebBridgeStatus();
 
     let nextModel = settingsProviderModels[newProvider];
-    if (!nextModel || (newProvider === 'deepinfra' && OPENROUTER_ONLY_PRESETS.has(nextModel))) {
-      nextModel = 'NousResearch/Hermes-3-Llama-3.1-70B';
-    } else if (!nextModel || (newProvider === 'openrouter' && DEEPINFRA_ONLY_PRESETS.has(nextModel))) {
-      nextModel = 'sao10k/l3.3-euryale-70b';
+    if (!nextModel || isUnavailablePreset(newProvider, nextModel)) {
+      nextModel = getDefaultProviderModel(newProvider);
     }
     settingsProviderModels[newProvider] = nextModel;
-
     setModelUI(nextModel);
   }
 
-  if (cardOpenRouter && cardDeepInfra) {
-    cardOpenRouter.addEventListener('click', () => switchProvider('openrouter'));
-    cardDeepInfra.addEventListener('click', () => switchProvider('deepinfra'));
-  }
+  cardOpenRouter?.addEventListener('click', () => switchProvider('openrouter'));
+  cardDeepInfra?.addEventListener('click', () => switchProvider('deepinfra'));
+  cardWebBridge?.addEventListener('click', () => switchProvider('webbridge'));
+
+  const webBridgeKindInput = document.getElementById('settings-web-bridge-kind');
+  webBridgeKindInput?.addEventListener('change', () => {
+    const defaultModels = {
+      deepseek: 'deepseek-chat',
+      gemini: 'gemini-advanced'
+    };
+    const model = defaultModels[webBridgeKindInput.value];
+    if (!model) return;
+    settingsProviderModels.webbridge = model;
+    if (getActiveChatProvider() === 'webbridge') setModelUI(model);
+  });
+
+  document.getElementById('btn-open-web-login')?.addEventListener('click', () => {
+    window.postMessage({
+      source: 'persona-chat-app',
+      type: 'open-login',
+      provider: webBridgeKindInput?.value || 'deepseek'
+    }, window.location.origin);
+    setTimeout(updateWebBridgeStatus, 500);
+  });
 
   // Memory Route Selection Event Listeners
   const cardMemInherit = document.getElementById('card-mem-inherit');
@@ -3146,8 +3336,7 @@ ${recMsgsStr}`;
   const btnAddCustomModel = document.getElementById('btn-add-custom-model');
 
   function updateCurrentProviderModelTracking() {
-    const activeProv = cardDeepInfra?.classList.contains('active') ? 'deepinfra' : 'openrouter';
-    settingsProviderModels[activeProv] = getModelFromUI();
+    settingsProviderModels[getActiveChatProvider()] = getModelFromUI();
   }
 
   if (modelPresetEl) {
@@ -3281,13 +3470,14 @@ ${recMsgsStr}`;
     btnSaveSettings.addEventListener('click', () => {
       const openrouterKey = document.getElementById('settings-openrouter-key')?.value.trim() || '';
       const deepinfraKey = document.getElementById('settings-deepinfra-key')?.value.trim() || '';
-      const isDeepInfra = cardDeepInfra?.classList.contains('active');
-      const provider = isDeepInfra ? 'deepinfra' : 'openrouter';
+      const webBridgeKind = document.getElementById('settings-web-bridge-kind')?.value || 'deepseek';
+      const provider = getActiveChatProvider();
 
       settingsProviderModels[provider] = getModelFromUI();
       const model = settingsProviderModels[provider];
-      const lastOpenRouterModel = settingsProviderModels['openrouter'];
-      const lastDeepInfraModel = settingsProviderModels['deepinfra'];
+      const lastOpenRouterModel = settingsProviderModels.openrouter;
+      const lastDeepInfraModel = settingsProviderModels.deepinfra;
+      const lastWebBridgeModel = settingsProviderModels.webbridge;
 
       const temperature = parseFloat(tempInput?.value || 0.68);
       const frequencyPenalty = parseFloat(freqInput?.value || 0.65);
@@ -3319,10 +3509,12 @@ ${recMsgsStr}`;
         theme,
         openrouterKey,
         deepinfraKey,
+        webBridgeKind,
         provider,
         model,
         lastOpenRouterModel,
         lastDeepInfraModel,
+        lastWebBridgeModel,
         temperature,
         frequencyPenalty,
         presencePenalty,

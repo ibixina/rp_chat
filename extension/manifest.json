@@ -1,0 +1,37 @@
+{
+  "manifest_version": 3,
+  "name": "Persona Chat Web Bridge",
+  "version": "1.0.0",
+  "description": "Connects Persona Chat to Gemini and DeepSeek private web endpoints using signed-in browser tabs.",
+  "permissions": ["tabs"],
+  "host_permissions": [
+    "https://gemini.google.com/*",
+    "https://chat.deepseek.com/*",
+    "https://ibixina.github.io/rp_chat/*",
+    "http://localhost/*",
+    "https://fe-static.deepseek.com/*",
+    "http://127.0.0.1/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://ibixina.github.io/rp_chat/*",
+        "http://localhost/*",
+        "http://127.0.0.1/*"
+      ],
+      "js": ["app-bridge.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://gemini.google.com/*",
+        "https://chat.deepseek.com/*"
+      ],
+      "js": ["provider-bridge.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
