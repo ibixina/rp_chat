@@ -42,7 +42,12 @@
         requestId: message.requestId,
         provider: message.provider,
         model: message.model,
-        messages: message.messages
+        messages: message.messages,
+        threadId: message.threadId,
+        messageId: message.messageId,
+        memory: message.memory,
+        instructionRevision: message.instructionRevision,
+        mode: message.mode
       });
     }
   });

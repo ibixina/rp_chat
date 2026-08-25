@@ -11,6 +11,19 @@ const PROVIDERS = {
   }
 };
 
+const THREAD_TABS_KEY = 'personaChatDeepSeekThreadTabs';
+let tabAllocation = Promise.resolve();
+
+async function loadThreadTabs() {
+  const stored = await chrome.storage.session.get(THREAD_TABS_KEY);
+  const mapping = stored[THREAD_TABS_KEY];
+  return mapping && typeof mapping === 'object' ? mapping : {};
+}
+
+async function saveThreadTabs(mapping) {
+  await chrome.storage.session.set({ [THREAD_TABS_KEY]: mapping });
+}
+
 function waitForTab(tabId, timeoutMs = 30000) {
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -33,9 +46,43 @@ function waitForTab(tabId, timeoutMs = 30000) {
   });
 }
 
-async function findProviderTab(provider) {
+async function findProviderTab(provider, excludedTabIds = new Set()) {
   const tabs = await chrome.tabs.query({ url: provider.query });
-  return tabs.find(tab => tab.active) || tabs[0] || null;
+  const available = tabs.filter(tab => !excludedTabIds.has(tab.id));
+  return available.find(tab => tab.active) || available[0] || null;
+}
+
+async function allocateDeepSeekTab(provider, request) {
+  const allocate = async () => {
+    const mapping = await loadThreadTabs();
+    const threadId = String(request.threadId || 'default');
+    const mappedTabId = mapping[threadId];
+    if (mappedTabId !== undefined) {
+      try {
+        const tab = await chrome.tabs.get(mappedTabId);
+        if (tab.url?.startsWith('https://chat.deepseek.com/')) return { tab, created: false };
+      } catch (_) {}
+      delete mapping[threadId];
+    }
+
+    const assignedTabIds = new Set(Object.values(mapping));
+    let tab = await findProviderTab(provider, assignedTabIds);
+    let created = false;
+    if (!tab) {
+      tab = await chrome.tabs.create({
+        url: provider.url,
+        active: request.mode !== 'memory'
+      });
+      created = true;
+    }
+    mapping[threadId] = tab.id;
+    await saveThreadTabs(mapping);
+    return { tab, created };
+  };
+
+  const result = tabAllocation.then(allocate, allocate);
+  tabAllocation = result.then(() => undefined, () => undefined);
+  return result;
 }
 
 async function openLogin(providerName) {
@@ -70,19 +117,33 @@ chrome.runtime.onConnect.addListener(appPort => {
     }
 
     try {
-      let tab = await findProviderTab(provider);
-      if (!tab) {
-        await chrome.tabs.create({ url: provider.url, active: true });
-        appPort.postMessage({
-          type: 'error',
-          requestId: request.requestId,
-          message: `${provider.label} was opened. Log in there, then retry the Persona Chat message.`
-        });
-        return;
+      let tab;
+      let created = false;
+      if (request.provider === 'deepseek') {
+        ({ tab, created } = await allocateDeepSeekTab(provider, request));
+      } else {
+        tab = await findProviderTab(provider);
+        if (!tab) {
+          await chrome.tabs.create({ url: provider.url, active: true });
+          appPort.postMessage({
+            type: 'error',
+            requestId: request.requestId,
+            message: `${provider.label} was opened. Log in there, then retry the Persona Chat message.`
+          });
+          return;
+        }
       }
 
       tab = await chrome.tabs.get(tab.id);
       if (tab.status !== 'complete') await waitForTab(tab.id);
+      if (created && request.mode !== 'memory') {
+        appPort.postMessage({
+          type: 'error',
+          requestId: request.requestId,
+          message: 'DeepSeek was opened for this Persona thread. Choose the model in DeepSeek, then retry the message.'
+        });
+        return;
+      }
 
       const providerPort = chrome.tabs.connect(tab.id, {
         name: `persona-provider:${request.requestId}`

@@ -1536,7 +1536,7 @@ ${persona.storyMemory || "No prior narrative memory recorded."}
     });
   }
 
-  async function streamWebChatCompletion(promptMessages, settings, onChunk) {
+  async function streamWebChatCompletion(promptMessages, settings, onChunk, bridgeContext = {}) {
     if (!await isWebBridgeExtensionAvailable()) {
       throw new Error('Persona Chat Web Bridge extension is not installed or enabled. Install it once, then reload this page.');
     }
@@ -1587,15 +1587,20 @@ ${persona.storyMemory || "No prior narrative memory recorded."}
         requestId,
         provider: settings.webBridgeKind || 'deepseek',
         model: settings.model || 'deepseek-chat',
-        messages: promptMessages
+        messages: promptMessages,
+        threadId: bridgeContext.threadId || '',
+        messageId: bridgeContext.messageId || '',
+        memory: bridgeContext.memory || '',
+        instructionRevision: bridgeContext.instructionRevision || '',
+        mode: bridgeContext.mode || 'chat'
       }, window.location.origin);
     });
   }
 
-  async function streamAiCompletion(promptMessages, settings, onChunk, isRetry = false) {
+  async function streamAiCompletion(promptMessages, settings, onChunk, isRetry = false, bridgeContext = {}) {
     const provider = (settings.provider || 'openrouter').toLowerCase();
     if (provider === 'webbridge') {
-      return streamWebChatCompletion(promptMessages, settings, onChunk);
+      return streamWebChatCompletion(promptMessages, settings, onChunk, bridgeContext);
     }
 
     const model = settings.model || (provider === 'deepinfra'
@@ -1724,7 +1729,7 @@ ${persona.storyMemory || "No prior narrative memory recorded."}
       if (!isRetry) {
         logEvent('AI_INFERENCE', 'Auto-retrying stream completion (attempt 2/2)...', { provider, model });
         await new Promise(resolve => setTimeout(resolve, 800));
-        return streamAiCompletion(promptMessages, settings, onChunk, true);
+        return streamAiCompletion(promptMessages, settings, onChunk, true, bridgeContext);
       }
       throw new Error('AI model returned an empty (0 character) response.');
     }
@@ -1912,6 +1917,11 @@ ${recMsgsStr}`;
         if (activePersonaId === persona.id && memoryTextarea && !memoryModal?.classList.contains('hidden')) {
           memoryTextarea.value = `[Patching memory delta...]\n\n${streamedText}`;
         }
+      }, false, {
+        threadId: `${window.location.origin}|${persona.id}:memory`,
+        messageId: messages[messages.length - 1]?.id || '',
+        instructionRevision: 'memory-delta-v1',
+        mode: 'memory'
       });
 
       if (deltaOutput && deltaOutput.trim()) {
@@ -2842,9 +2852,7 @@ ${recMsgsStr}`;
       { value: 'meta-llama/Llama-3.3-70B-Instruct', label: 'DeepInfra: meta-llama/Llama-3.3-70B-Instruct' }
     ],
     webbridge: [
-      { value: 'deepseek-chat', label: 'DeepSeek Web: Chat' },
-      { value: 'deepseek-reasoner', label: 'DeepSeek Web: Reasoner' },
-      { value: 'deepseek-expert', label: 'DeepSeek Web: Expert' },
+      { value: 'deepseek-chat', label: 'DeepSeek Web: Use model selected in DeepSeek' },
       { value: 'gemini-advanced', label: 'Gemini Web: Advanced' }
     ]
   };
@@ -2906,7 +2914,10 @@ ${recMsgsStr}`;
 
   function isUnavailablePreset(provider, model) {
     if (provider === 'webbridge') {
-      return OPENROUTER_ONLY_PRESETS.has(model) || DEEPINFRA_ONLY_PRESETS.has(model);
+      return OPENROUTER_ONLY_PRESETS.has(model)
+        || DEEPINFRA_ONLY_PRESETS.has(model)
+        || model === 'deepseek-reasoner'
+        || model === 'deepseek-expert';
     }
     if (provider === 'deepinfra') {
       return OPENROUTER_ONLY_PRESETS.has(model) || WEB_BRIDGE_ONLY_PRESETS.has(model);
@@ -4526,6 +4537,12 @@ ${recMsgsStr}`;
 
           scrollToBottomIfNearBottom();
         }
+      }, false, {
+        threadId: `${window.location.origin}|${personaId}:chat`,
+        messageId: messages[messages.length - 1]?.id || '',
+        memory: persona.storyMemory || '',
+        instructionRevision: JSON.stringify([persona.name || '', persona.description || '', persona.systemPrompt || '']),
+        mode: 'chat'
       });
 
       const finalAssistantMsg = {
@@ -4730,6 +4747,12 @@ ${recMsgsStr}`;
           }
           scrollToBottomIfNearBottom();
         }
+      }, false, {
+        threadId: `${window.location.origin}|${targetPersonaId}:chat`,
+        messageId: msg.id,
+        memory: persona.storyMemory || '',
+        instructionRevision: JSON.stringify([persona.name || '', persona.description || '', persona.systemPrompt || '']),
+        mode: 'continue'
       });
 
       const updatedText = originalText + appendedText;

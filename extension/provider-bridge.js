@@ -1,6 +1,5 @@
 const PROVIDER = location.hostname === 'gemini.google.com' ? 'gemini' : 'deepseek';
-const DEEPSEEK_WASM = 'https://fe-static.deepseek.com/chat/static/sha3_wasm_bg.7b9ca65ddd.wasm';
-let powModule;
+const DEEPSEEK_UI_THREADS_KEY = 'persona-chat-deepseek-ui-threads-v1';
 
 function formatPrompt(messages) {
   const transcript = messages.map(message => {
@@ -99,155 +98,256 @@ async function generateGemini(prompt, model, port, requestId) {
   if (!finalText) throw new Error('Gemini Web returned no text. Its private response format may have changed.');
 }
 
-function deepSeekToken() {
-  const preferred = ['userToken', 'token', 'auth_token', 'access_token', 'accessToken'];
-  for (const key of preferred) {
-    const value = localStorage.getItem(key) || sessionStorage.getItem(key);
-    if (!value) continue;
-    try {
-      const parsed = JSON.parse(value);
-      return parsed.value || parsed.token || parsed.access_token || parsed.accessToken || value;
-    } catch (_) {
-      return value;
-    }
+function loadDeepSeekThreads() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(DEEPSEEK_UI_THREADS_KEY) || '{}');
+    return stored && typeof stored === 'object' ? stored : {};
+  } catch (_) {
+    return {};
   }
-  for (const store of [localStorage, sessionStorage]) {
-    for (let index = 0; index < store.length; index++) {
-      const key = store.key(index);
-      if (!/token/i.test(key)) continue;
-      const value = store.getItem(key);
-      if (value) return value;
-    }
-  }
-  return '';
 }
 
-async function solvePow(challenge) {
-  if (!powModule) {
-    const response = await fetch(DEEPSEEK_WASM);
-    if (!response.ok) throw new Error(`DeepSeek proof-of-work module returned HTTP ${response.status}.`);
-    powModule = await WebAssembly.compile(await response.arrayBuffer());
-  }
-  const instance = await WebAssembly.instantiate(powModule, { wbg: {} });
-  const exports = instance.exports;
-  const encoder = new TextEncoder();
-  const challengeBytes = encoder.encode(challenge.challenge);
-  const prefixBytes = encoder.encode(`${challenge.salt}_${challenge.expire_at}_`);
-  const challengePointer = exports.__wbindgen_export_0(challengeBytes.length, 1) >>> 0;
-  const prefixPointer = exports.__wbindgen_export_0(prefixBytes.length, 1) >>> 0;
-  new Uint8Array(exports.memory.buffer, challengePointer, challengeBytes.length).set(challengeBytes);
-  new Uint8Array(exports.memory.buffer, prefixPointer, prefixBytes.length).set(prefixBytes);
-  const stackPointer = exports.__wbindgen_add_to_stack_pointer(-16);
-  exports.wasm_solve(stackPointer, challengePointer, challengeBytes.length, prefixPointer, prefixBytes.length, challenge.difficulty);
-  const view = new DataView(exports.memory.buffer);
-  const code = view.getInt32(stackPointer, true);
-  const answer = view.getFloat64(stackPointer + 8, true);
-  exports.__wbindgen_add_to_stack_pointer(16);
-  if (code === 0 || !Number.isFinite(answer) || answer <= 0) throw new Error('DeepSeek proof-of-work failed.');
-  return Math.floor(answer);
+function saveDeepSeekThreads(threads) {
+  try {
+    localStorage.setItem(DEEPSEEK_UI_THREADS_KEY, JSON.stringify(threads));
+  } catch (_) {}
 }
 
-function deepSeekHeaders(token) {
+async function fingerprint(value) {
+  const bytes = new TextEncoder().encode(String(value || ''));
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function currentDeepSeekRoute() {
+  return `${location.pathname}${location.search}`;
+}
+
+async function buildIncrementalPrompt(request, thread) {
+  const messages = Array.isArray(request.messages) ? request.messages : [];
+  const firstSystemIndex = messages.findIndex(message => message?.role === 'system');
+  const persistentSystem = firstSystemIndex >= 0 ? String(messages[firstSystemIndex].content || '') : '';
+  const instructionFingerprint = await fingerprint(request.instructionRevision || persistentSystem);
+  const memoryFingerprint = await fingerprint(request.memory || '');
+  const systemFingerprint = await fingerprint(persistentSystem);
+  const sections = [];
+
+  if (instructionFingerprint !== thread.instructionFingerprint) {
+    sections.push(`<SYSTEM_UPDATE>\nReplace the prior persona instructions with these instructions:\n${persistentSystem}\n</SYSTEM_UPDATE>`);
+  } else if (memoryFingerprint !== thread.memoryFingerprint) {
+    sections.push(`<MEMORY_UPDATE>\nReplace the prior story memory with this updated memory:\n${request.memory || 'No prior narrative memory recorded.'}\n</MEMORY_UPDATE>`);
+  } else if (systemFingerprint !== thread.systemFingerprint) {
+    sections.push(`<SYSTEM_UPDATE>\nReplace the prior persona instructions with these instructions:\n${persistentSystem}\n</SYSTEM_UPDATE>`);
+  }
+
+  messages.forEach((message, index) => {
+    if (message?.role === 'system' && index !== firstSystemIndex) {
+      sections.push(`<SYSTEM>\n${message.content || ''}\n</SYSTEM>`);
+    }
+  });
+
+  if (request.mode === 'continue') {
+    sections.push('<USER>\nContinue your previous response without repeating it.\n</USER>');
+  } else {
+    const latest = [...messages].reverse().find(message => message?.role !== 'system');
+    if (!latest) throw new Error('The Persona Chat request did not contain a new message.');
+    const role = String(latest.role || 'user').toUpperCase();
+    sections.push(`<${role}>\n${latest.content || ''}\n</${role}>`);
+  }
+
   return {
-    'Authorization': `Bearer ${token}`,
-    'Content-Type': 'application/json',
-    'x-client-platform': 'web',
-    'x-client-version': '2.0.0',
-    'x-client-locale': 'en',
-    'x-client-timezone-offset': String(new Date().getTimezoneOffset()),
-    'x-app-version': '2.0.0'
+    prompt: `Continue the existing conversation using only the update and new turn below. Return only the next assistant response; do not add role labels.\n\n${sections.join('\n\n')}`,
+    instructionFingerprint,
+    memoryFingerprint,
+    systemFingerprint
   };
 }
 
-function deepSeekText(fragments) {
-  return fragments
-    .filter(fragment => fragment && (fragment.type === 'RESPONSE' || fragment.type === 'SEARCH'))
-    .map(fragment => fragment.content || '')
-    .join('');
+function isVisible(element) {
+  if (!element) return false;
+  const style = getComputedStyle(element);
+  return style.display !== 'none' && style.visibility !== 'hidden' && element.getClientRects().length > 0;
 }
 
-async function generateDeepSeek(prompt, model, port, requestId) {
-  const token = deepSeekToken();
-  if (!token) throw new Error('DeepSeek login was not found. Open DeepSeek, sign in, send one message there, and retry.');
-  const headers = deepSeekHeaders(token);
-  const challengeResponse = await fetch('/api/v0/chat/create_pow_challenge', {
-    method: 'POST', credentials: 'include', headers,
-    body: JSON.stringify({ target_path: '/api/v0/chat/completion' })
-  });
-  const challengeJson = await challengeResponse.json().catch(() => null);
-  const challenge = challengeJson?.data?.biz_data?.challenge;
-  if (!challengeResponse.ok || !challenge) throw new Error(`DeepSeek authentication or proof-of-work challenge failed (HTTP ${challengeResponse.status}).`);
-  const answer = await solvePow(challenge);
+function findDeepSeekInput() {
+  const candidates = [
+    document.querySelector('#chat-input'),
+    document.querySelector('textarea[placeholder="Message DeepSeek"]'),
+    document.querySelector('textarea'),
+    document.querySelector('[contenteditable="true"]')
+  ];
+  return candidates.find(isVisible) || null;
+}
 
-  const sessionResponse = await fetch('/api/v0/chat_session/create', {
-    method: 'POST', credentials: 'include', headers, body: '{}'
-  });
-  const sessionJson = await sessionResponse.json().catch(() => null);
-  const sessionId = sessionJson?.data?.biz_data?.chat_session?.id || sessionJson?.data?.biz_data?.id;
-  if (!sessionResponse.ok || !sessionId) throw new Error(`DeepSeek could not create a chat session (HTTP ${sessionResponse.status}).`);
+function assistantReplies() {
+  const mainReplies = [...document.querySelectorAll('.ds-assistant-message-main-content')].filter(isVisible);
+  if (mainReplies.length) return mainReplies;
+  return [...document.querySelectorAll('.ds-markdown')]
+    .filter(reply => isVisible(reply) && !reply.closest('.ds-think-content'));
+}
 
-  const powPayload = btoa(JSON.stringify({
-    algorithm: challenge.algorithm,
-    challenge: challenge.challenge,
-    salt: challenge.salt,
-    answer,
-    signature: challenge.signature,
-    target_path: '/api/v0/chat/completion'
-  }));
-  const thinking = /reasoner/i.test(model || '');
-  const completionResponse = await fetch('/api/v0/chat/completion', {
-    method: 'POST',
-    credentials: 'include',
-    headers: { ...headers, 'X-DS-PoW-Response': powPayload },
-    body: JSON.stringify({
-      chat_session_id: sessionId,
-      parent_message_id: null,
-      model_type: /expert/i.test(model || '') ? 'expert' : 'default',
-      prompt,
-      ref_file_ids: [],
-      thinking_enabled: thinking,
-      search_enabled: false,
-      action: null,
-      preempt: false
-    })
-  });
-  if (!completionResponse.ok) throw new Error(`DeepSeek Web returned HTTP ${completionResponse.status}. Sign in again and retry.`);
+function snapshotDeepSeekReplies() {
+  return new Map(assistantReplies().map(reply => [
+    reply,
+    (reply.innerText || reply.textContent || '').trim()
+  ]));
+}
 
-  const reader = completionResponse.body.getReader();
-  const decoder = new TextDecoder();
-  const fragments = [];
-  const state = { sent: '' };
-  let buffer = '';
-  let lastPath = '';
-
-  while (true) {
-    const { done, value } = await reader.read();
-    buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || '';
-    for (const line of lines) {
-      if (!line.startsWith('data: ')) continue;
-      let event;
-      try {
-        event = JSON.parse(line.slice(6));
-      } catch (_) {
-        continue;
-      }
-      if (event.type === 'error') throw new Error(event.content || 'DeepSeek model error.');
-      if (event.p !== undefined) lastPath = event.p;
-      if (Array.isArray(event.v?.response?.fragments)) {
-        fragments.splice(0, fragments.length, ...event.v.response.fragments);
-      } else if (lastPath === 'response/fragments') {
-        const incoming = Array.isArray(event.v) ? event.v : [event.v];
-        fragments.push(...incoming.filter(item => item && typeof item === 'object'));
-      } else if (lastPath === 'response/fragments/-1/content' && typeof event.v !== 'object' && fragments.length) {
-        fragments[fragments.length - 1].content = `${fragments[fragments.length - 1].content || ''}${event.v}`;
-      }
-      sendDelta(port, requestId, state, deepSeekText(fragments));
-    }
-    if (done) break;
+function findNewDeepSeekReply(snapshot) {
+  const replies = assistantReplies();
+  for (let index = replies.length - 1; index >= 0; index--) {
+    const reply = replies[index];
+    const text = (reply.innerText || reply.textContent || '').trim();
+    if (!snapshot.has(reply) || text !== snapshot.get(reply)) return { reply, text };
   }
-  if (!state.sent) throw new Error('DeepSeek Web returned no text. Its private response format may have changed.');
+  return null;
+}
+
+
+function elementLabel(element) {
+  return [element.getAttribute('aria-label'), element.getAttribute('title'), element.textContent]
+    .filter(Boolean)
+    .join(' ')
+    .trim();
+}
+
+function findStopButton() {
+  return [...document.querySelectorAll('button')]
+    .find(button => isVisible(button) && /^(stop|stop generating)$|stop generation/i.test(elementLabel(button))) || null;
+}
+
+function findSendButton(input) {
+  const semantic = [...document.querySelectorAll('button')]
+    .find(button => isVisible(button) && !button.disabled && /^(send|submit)$|send message/i.test(elementLabel(button)));
+  if (semantic) return semantic;
+
+  let container = input.closest('form');
+  if (!container) {
+    container = input.parentElement?.parentElement?.parentElement || input.parentElement;
+  }
+  const candidates = [...(container?.querySelectorAll('button') || [])]
+    .filter(button => isVisible(button) && !button.disabled && !/stop/i.test(elementLabel(button)));
+  return candidates.at(-1) || null;
+}
+
+function setInputText(input, text) {
+  input.focus();
+  if (input instanceof HTMLTextAreaElement || input instanceof HTMLInputElement) {
+    const prototype = input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
+    if (setter) setter.call(input, text);
+    else input.value = text;
+  } else {
+    input.textContent = text;
+  }
+  input.dispatchEvent(new InputEvent('input', {
+    bubbles: true,
+    composed: true,
+    inputType: 'insertText',
+    data: text
+  }));
+}
+
+function pressEnter(input) {
+  const options = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true, composed: true };
+  input.dispatchEvent(new KeyboardEvent('keydown', options));
+  input.dispatchEvent(new KeyboardEvent('keyup', options));
+}
+
+function delay(milliseconds) {
+  return new Promise(resolve => setTimeout(resolve, milliseconds));
+}
+
+async function waitForDeepSeekInput(timeoutMs = 15000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const input = findDeepSeekInput();
+    if (input) return input;
+    await delay(200);
+  }
+  throw new Error('DeepSeek chat input was not found. Sign in, open a chat, choose the model you want in DeepSeek, and retry.');
+}
+
+async function waitForDeepSeekReply(replySnapshot, port, requestId, timeoutMs = 170000) {
+  const deadline = Date.now() + timeoutMs;
+  const state = { sent: '' };
+  let stableChecks = 0;
+  let observedStopButton = false;
+  let previousText = '';
+
+  while (Date.now() < deadline) {
+    const stopButton = findStopButton();
+    if (stopButton) observedStopButton = true;
+    const candidate = findNewDeepSeekReply(replySnapshot);
+    const text = candidate?.text || '';
+
+    if (text) {
+      sendDelta(port, requestId, state, text);
+      if (text === previousText) stableChecks++;
+      else stableChecks = 0;
+      previousText = text;
+
+      if ((observedStopButton && !stopButton) || (!observedStopButton && stableChecks >= 20)) {
+        return text;
+      }
+    }
+    await delay(150);
+  }
+
+  if (state.sent) return state.sent;
+  throw new Error('DeepSeek did not produce a visible response within three minutes.');
+}
+
+async function submitDeepSeekPrompt(prompt, port, requestId) {
+  const input = await waitForDeepSeekInput();
+  const replySnapshot = snapshotDeepSeekReplies();
+  setInputText(input, prompt);
+  await delay(100);
+  pressEnter(input);
+  await delay(500);
+
+  const value = input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement
+    ? input.value
+    : input.textContent;
+  if (value === prompt && !findNewDeepSeekReply(replySnapshot) && !findStopButton()) {
+    const sendButton = findSendButton(input);
+    if (!sendButton) throw new Error('DeepSeek send control was not found. Reload the DeepSeek tab and retry.');
+    sendButton.click();
+  }
+
+  return waitForDeepSeekReply(replySnapshot, port, requestId);
+}
+
+async function generateDeepSeekThroughUI(request, port, requestId) {
+  const threadId = String(request.threadId || 'default');
+  const route = currentDeepSeekRoute();
+  const threads = loadDeepSeekThreads();
+  const routeOwner = Object.entries(threads).find(([, thread]) => thread?.route === route)?.[0];
+  if (routeOwner && routeOwner !== threadId) {
+    throw new Error('This DeepSeek chat is already linked to another Persona Chat thread. Open New chat in DeepSeek, choose its model, and retry.');
+  }
+
+  let thread = threads[threadId];
+  if (thread?.route !== route) thread = null;
+  const messages = Array.isArray(request.messages) ? request.messages : [];
+  const firstSystem = messages.find(message => message?.role === 'system');
+  const promptState = thread
+    ? await buildIncrementalPrompt(request, thread)
+    : {
+        prompt: formatPrompt(messages),
+        instructionFingerprint: await fingerprint(request.instructionRevision || firstSystem?.content || ''),
+        memoryFingerprint: await fingerprint(request.memory || ''),
+        systemFingerprint: await fingerprint(firstSystem?.content || '')
+      };
+
+  await submitDeepSeekPrompt(promptState.prompt, port, requestId);
+  threads[threadId] = {
+    route: currentDeepSeekRoute(),
+    instructionFingerprint: promptState.instructionFingerprint,
+    memoryFingerprint: promptState.memoryFingerprint,
+    systemFingerprint: promptState.systemFingerprint
+  };
+  saveDeepSeekThreads(threads);
 }
 
 chrome.runtime.onConnect.addListener(port => {
@@ -255,15 +355,17 @@ chrome.runtime.onConnect.addListener(port => {
   port.onMessage.addListener(async request => {
     if (request?.type !== 'generate') return;
     try {
-      const prompt = formatPrompt(request.messages || []);
-      if (PROVIDER === 'gemini') await generateGemini(prompt, request.model, port, request.requestId);
-      else await generateDeepSeek(prompt, request.model, port, request.requestId);
+      if (PROVIDER === 'gemini') {
+        await generateGemini(formatPrompt(request.messages || []), request.model, port, request.requestId);
+      } else {
+        await generateDeepSeekThroughUI(request, port, request.requestId);
+      }
       port.postMessage({ type: 'done', requestId: request.requestId });
     } catch (error) {
       port.postMessage({
         type: 'error',
         requestId: request.requestId,
-        message: error.message || 'The private web-chat request failed.'
+        message: error.message || 'The web-chat request failed.'
       });
     }
   });

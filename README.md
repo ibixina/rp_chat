@@ -63,9 +63,11 @@ One-time Chromium/Brave setup:
 4. Open [Gemini](https://gemini.google.com/) or [DeepSeek](https://chat.deepseek.com/) and log in normally.
 5. In Persona Chat select **Web Chat Bridge**, choose the provider, and save.
 
-Persona Chat detects the extension automatically. A signed-in provider tab remains open as an inactive authentication context, but prompts are not inserted into its interface. The extension calls the provider's private web endpoint and streams the result directly to Persona Chat. If no provider tab exists, it opens the login page and asks you to retry after signing in.
+Persona Chat detects the extension automatically. For DeepSeek, the extension types prompts into the signed-in chat interface and streams the visible reply back into Persona Chat. If no suitable tab exists, it opens DeepSeek and asks you to choose the model there before retrying the message.
 
-The extension is restricted to `https://ibixina.github.io/rp_chat/`, localhost development pages, Gemini, DeepSeek, and DeepSeek's proof-of-work asset host. These private endpoints are undocumented and can break without notice. Their automated use may conflict with [DeepSeek's Terms of Use](https://cdn.deepseek.com/policies/en-US/deepseek-terms-of-use.html) or [Google's Terms of Service](https://policies.google.com/terms). Provider-side capacity and account limits still apply.
+DeepSeek keeps a dedicated browser tab and chat per persona, plus an inactive memory-maintenance tab. The first turn sends the complete persona prompt and available history; later turns send only the new message, current turn directives, and story memory when it changes. Model selection remains entirely in DeepSeek's interface.
+
+The extension is restricted to `https://ibixina.github.io/rp_chat/`, localhost development pages, Gemini, and DeepSeek. Provider interface or endpoint changes can break the bridge without notice. Automated use may conflict with [DeepSeek's Terms of Use](https://cdn.deepseek.com/policies/en-US/deepseek-terms-of-use.html) or [Google's Terms of Service](https://policies.google.com/terms). Provider-side capacity and account limits still apply.
 
 ### Hosting on GitHub Pages
 
