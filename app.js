@@ -1536,7 +1536,7 @@ ${persona.storyMemory || "No prior narrative memory recorded."}
     });
   }
 
-  async function streamWebChatCompletion(promptMessages, settings, onChunk, bridgeContext = {}) {
+  async function streamWebChatCompletion(promptMessages, settings, onChunk, bridgeContext = {}, signal) {
     if (!await isWebBridgeExtensionAvailable()) {
       throw new Error('Persona Chat Web Bridge extension is not installed or enabled. Install it once, then reload this page.');
     }
@@ -1549,6 +1549,16 @@ ${persona.storyMemory || "No prior narrative memory recorded."}
       const cleanup = () => {
         clearTimeout(timeout);
         window.removeEventListener('message', onMessage);
+        signal?.removeEventListener('abort', onAbort);
+      };
+      const onAbort = () => {
+        window.postMessage({
+          source: 'persona-chat-app',
+          type: 'cancel',
+          requestId
+        }, window.location.origin);
+        cleanup();
+        reject(new DOMException('Generation cancelled.', 'AbortError'));
       };
       const resetTimeout = () => {
         clearTimeout(timeout);
@@ -1580,6 +1590,11 @@ ${persona.storyMemory || "No prior narrative memory recorded."}
       };
 
       window.addEventListener('message', onMessage);
+      if (signal?.aborted) {
+        onAbort();
+        return;
+      }
+      signal?.addEventListener('abort', onAbort, { once: true });
       resetTimeout();
       window.postMessage({
         source: 'persona-chat-app',
@@ -1597,10 +1612,10 @@ ${persona.storyMemory || "No prior narrative memory recorded."}
     });
   }
 
-  async function streamAiCompletion(promptMessages, settings, onChunk, isRetry = false, bridgeContext = {}) {
+  async function streamAiCompletion(promptMessages, settings, onChunk, isRetry = false, bridgeContext = {}, signal) {
     const provider = (settings.provider || 'openrouter').toLowerCase();
     if (provider === 'webbridge') {
-      return streamWebChatCompletion(promptMessages, settings, onChunk, bridgeContext);
+      return streamWebChatCompletion(promptMessages, settings, onChunk, bridgeContext, signal);
     }
 
     const model = settings.model || (provider === 'deepinfra'
@@ -1652,7 +1667,8 @@ ${persona.storyMemory || "No prior narrative memory recorded."}
     const response = await fetch(endpoint, {
       method: 'POST',
       headers,
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      signal
     });
 
     if (!response.ok) {
@@ -1729,7 +1745,8 @@ ${persona.storyMemory || "No prior narrative memory recorded."}
       if (!isRetry) {
         logEvent('AI_INFERENCE', 'Auto-retrying stream completion (attempt 2/2)...', { provider, model });
         await new Promise(resolve => setTimeout(resolve, 800));
-        return streamAiCompletion(promptMessages, settings, onChunk, true, bridgeContext);
+        signal?.throwIfAborted();
+        return streamAiCompletion(promptMessages, settings, onChunk, true, bridgeContext, signal);
       }
       throw new Error('AI model returned an empty (0 character) response.');
     }
@@ -1955,6 +1972,7 @@ ${recMsgsStr}`;
   const generatingPersonas = {};
   const activeStreamingState = {};
   const memorySummarizingState = {};
+  const generationControllers = {};
 
   function updateMemorySummarizingUI(personaId) {
     const isSummarizing = !!memorySummarizingState[personaId];
@@ -2014,6 +2032,7 @@ ${recMsgsStr}`;
   const chatFeedEl = document.getElementById('chat-feed');
   const messageInput = document.getElementById('message-input');
   const btnSend = document.getElementById('btn-send');
+  const btnStopGeneration = document.getElementById('btn-stop-generation');
   
   const appContainerEl = document.querySelector('.app-container');
   const btnToggleSidebar = document.getElementById('btn-toggle-sidebar');
@@ -3651,6 +3670,14 @@ ${recMsgsStr}`;
     return (Date.now() - lastTs) > OFFLINE_THRESHOLD_MS;
   }
 
+  function updateGenerationControls(personaId = activePersonaId) {
+    if (personaId !== activePersonaId) return;
+    const isGenerating = !!(personaId && generatingPersonas[personaId]);
+    btnSend.classList.toggle('hidden', isGenerating);
+    btnStopGeneration.classList.toggle('hidden', !isGenerating);
+    if (!isGenerating) btnStopGeneration.disabled = false;
+  }
+
   function updateHeaderStatus(personaId) {
     if (!personaId || personaId !== activePersonaId) return;
 
@@ -3757,6 +3784,7 @@ ${recMsgsStr}`;
 
     updateHeaderStatus(personaId);
     updateMemorySummarizingUI(personaId);
+    updateGenerationControls(personaId);
 
     renderContactList(LocalDB.getPersonas());
 
@@ -4431,6 +4459,10 @@ ${recMsgsStr}`;
       return;
     }
 
+    const controller = new AbortController();
+    generationControllers[personaId] = controller;
+    updateGenerationControls(personaId);
+
     // Remove any trailing error message before generating new response
     const existingMsgs = LocalDB.getMessages(personaId);
     if (existingMsgs && existingMsgs.length > 0) {
@@ -4543,7 +4575,7 @@ ${recMsgsStr}`;
         memory: persona.storyMemory || '',
         instructionRevision: JSON.stringify([persona.name || '', persona.description || '', persona.systemPrompt || '']),
         mode: 'chat'
-      });
+      }, controller.signal);
 
       const finalAssistantMsg = {
         id: assistantMsgId,
@@ -4566,22 +4598,41 @@ ${recMsgsStr}`;
       logEvent('MEMORY', `Persona message ${allMsgs.length} completed. Auto-summarization will evaluate after next user message (${msgsLeft} message(s) left).`);
 
     } catch (err) {
-      console.error('Streaming error:', err);
+      const wasCancelled = err?.name === 'AbortError';
+      if (!wasCancelled) console.error('Streaming error:', err);
       if (activePersonaId === personaId) {
         removeTypingIndicator();
       }
-      const errorMsgObj = {
-        id: `err-${Date.now()}`,
-        sender: 'persona',
-        text: `⚠️ Error generating response: ${err.message || err}`,
-        timestamp: new Date().toISOString(),
-        isError: true,
-        ...(customInstruction && customInstruction.trim() ? { retryInstruction: customInstruction.trim() } : {})
-      };
-      LocalDB.addMessage(personaId, errorMsgObj);
-      if (activePersonaId === personaId) {
-        activeMessagesList = LocalDB.getMessages(personaId) || [];
-        displayedMessageCount++;
+
+      if (wasCancelled) {
+        const partialText = activeStreamingState[personaId]?.fullText || '';
+        if (partialText.trim()) {
+          LocalDB.addMessage(personaId, {
+            id: assistantMsgId,
+            sender: 'persona',
+            text: partialText,
+            timestamp: new Date().toISOString(),
+            ...(customInstruction && customInstruction.trim() ? { retryInstruction: customInstruction.trim() } : {})
+          });
+          if (activePersonaId === personaId) {
+            activeMessagesList = LocalDB.getMessages(personaId) || [];
+            displayedMessageCount++;
+          }
+        }
+      } else {
+        const errorMsgObj = {
+          id: `err-${Date.now()}`,
+          sender: 'persona',
+          text: `⚠️ Error generating response: ${err.message || err}`,
+          timestamp: new Date().toISOString(),
+          isError: true,
+          ...(customInstruction && customInstruction.trim() ? { retryInstruction: customInstruction.trim() } : {})
+        };
+        LocalDB.addMessage(personaId, errorMsgObj);
+        if (activePersonaId === personaId) {
+          activeMessagesList = LocalDB.getMessages(personaId) || [];
+          displayedMessageCount++;
+        }
       }
     } finally {
       isProgrammaticScroll = true;
@@ -4591,6 +4642,8 @@ ${recMsgsStr}`;
       }
       delete activeStreamingState[personaId];
       generatingPersonas[personaId] = false;
+      delete generationControllers[personaId];
+      updateGenerationControls(personaId);
       removeTypingIndicator();
 
 
@@ -4719,12 +4772,19 @@ ${recMsgsStr}`;
     const targetPersonaId = activePersonaId;
     if (!targetPersonaId || generatingPersonas[targetPersonaId]) return;
     generatingPersonas[targetPersonaId] = true;
+    const controller = new AbortController();
+    generationControllers[targetPersonaId] = controller;
+    updateGenerationControls(targetPersonaId);
 
     if (activePersonaId === targetPersonaId) {
       showTypingIndicator();
       updateHeaderStatus(targetPersonaId);
       scrollToBottom();
     }
+
+    let streamedText = '';
+    const textEl = bubble.querySelector('.message-text');
+    const originalText = msg.text;
 
     try {
       const persona = LocalDB.getPersona(targetPersonaId);
@@ -4733,15 +4793,14 @@ ${recMsgsStr}`;
 
       const promptMessages = preparePromptMessages(persona, msgs, settings, "\n9. CONTINUATION INSTRUCTION: You are continuing your previous message. Do NOT repeat or echo your previous response. Seamlessly pick up right where your last message left off and continue the scene dynamically.");
 
-      let appendedText = '';
-      const textEl = bubble.querySelector('.message-text');
-      const originalText = msg.text;
 
+      let appendedText = '';
       appendedText = await streamAiCompletion(promptMessages, settings, (chunk) => {
+        streamedText += chunk;
         if (activePersonaId === targetPersonaId) {
           removeTypingIndicator();
           if (textEl) {
-            const updatedRaw = (textEl.dataset.rawText || originalText) + chunk;
+            const updatedRaw = originalText + streamedText;
             textEl.dataset.rawText = updatedRaw;
             textEl.innerHTML = formatMessageText(updatedRaw);
           }
@@ -4753,21 +4812,31 @@ ${recMsgsStr}`;
         memory: persona.storyMemory || '',
         instructionRevision: JSON.stringify([persona.name || '', persona.description || '', persona.systemPrompt || '']),
         mode: 'continue'
-      });
+      }, controller.signal);
 
       const updatedText = originalText + appendedText;
       msg.text = updatedText;
       LocalDB.updateMessage(targetPersonaId, msg.id, { text: updatedText });
 
     } catch (err) {
-      console.error('Continue error:', err);
-      showAlertDialog({
-        title: 'Generation Failed',
-        message: err.message,
-        icon: 'error'
-      });
+      if (err?.name === 'AbortError') {
+        if (streamedText) {
+          const updatedText = originalText + streamedText;
+          msg.text = updatedText;
+          LocalDB.updateMessage(targetPersonaId, msg.id, { text: updatedText });
+        }
+      } else {
+        console.error('Continue error:', err);
+        showAlertDialog({
+          title: 'Generation Failed',
+          message: err.message,
+          icon: 'error'
+        });
+      }
     } finally {
       generatingPersonas[targetPersonaId] = false;
+      delete generationControllers[targetPersonaId];
+      updateGenerationControls(targetPersonaId);
       if (activePersonaId === targetPersonaId) {
         removeTypingIndicator();
         updateHeaderStatus(targetPersonaId);
@@ -4787,6 +4856,12 @@ ${recMsgsStr}`;
   // Input Auto-Resizing & Event Listeners
   // -------------------------------------------------------------
   btnSend.addEventListener('click', sendMessage);
+  btnStopGeneration.addEventListener('click', () => {
+    const controller = generationControllers[activePersonaId];
+    if (!controller) return;
+    btnStopGeneration.disabled = true;
+    controller.abort();
+  });
 
   messageInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {

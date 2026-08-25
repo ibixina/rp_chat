@@ -693,6 +693,19 @@ body, html {
   background-color: var(--accent-green-hover);
 }
 
+.stop-generation-btn {
+  background-color: #d9534f;
+}
+
+.stop-generation-btn:hover {
+  background-color: #c9302c;
+}
+
+.stop-generation-btn:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
 /* ------------------------------------------------------------- */
 /* MODALS                                                       */
 /* ------------------------------------------------------------- */

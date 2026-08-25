@@ -36,6 +36,14 @@
       return;
     }
 
+    if (message.type === 'cancel') {
+      getPort().postMessage({
+        type: 'cancel',
+        requestId: message.requestId
+      });
+      return;
+    }
+
     if (message.type === 'generate') {
       getPort().postMessage({
         type: 'generate',

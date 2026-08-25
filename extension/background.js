@@ -103,8 +103,16 @@ chrome.runtime.onMessage.addListener(message => {
 
 chrome.runtime.onConnect.addListener(appPort => {
   if (appPort.name !== 'persona-chat-app') return;
+  const providerPorts = new Map();
+  const cancelledRequests = new Set();
+
 
   appPort.onMessage.addListener(async request => {
+    if (request?.type === 'cancel') {
+      cancelledRequests.add(request.requestId);
+      providerPorts.get(request.requestId)?.postMessage(request);
+      return;
+    }
     if (request?.type !== 'generate') return;
     const provider = PROVIDERS[request.provider];
     if (!provider) {
@@ -145,17 +153,26 @@ chrome.runtime.onConnect.addListener(appPort => {
         return;
       }
 
+      if (cancelledRequests.delete(request.requestId)) return;
+
       const providerPort = chrome.tabs.connect(tab.id, {
         name: `persona-provider:${request.requestId}`
       });
+      providerPorts.set(request.requestId, providerPort);
       let finished = false;
 
       providerPort.onMessage.addListener(message => {
         if (message.requestId !== request.requestId) return;
-        if (message.type === 'done' || message.type === 'error') finished = true;
+        if (message.type === 'done' || message.type === 'error' || message.type === 'cancelled') {
+          finished = true;
+          providerPorts.delete(request.requestId);
+          cancelledRequests.delete(request.requestId);
+        }
         appPort.postMessage(message);
       });
       providerPort.onDisconnect.addListener(() => {
+        providerPorts.delete(request.requestId);
+        cancelledRequests.delete(request.requestId);
         if (finished) return;
         appPort.postMessage({
           type: 'error',
@@ -163,13 +180,29 @@ chrome.runtime.onConnect.addListener(appPort => {
           message: `${provider.label} disconnected before returning a response.`
         });
       });
+      if (cancelledRequests.has(request.requestId)) {
+        providerPort.postMessage({ type: 'cancel', requestId: request.requestId });
+        return;
+      }
       providerPort.postMessage(request);
     } catch (error) {
-      appPort.postMessage({
-        type: 'error',
-        requestId: request.requestId,
-        message: error.message || 'Could not control the provider tab.'
-      });
+      const wasCancelled = cancelledRequests.delete(request.requestId);
+      providerPorts.delete(request.requestId);
+      if (!wasCancelled) {
+        appPort.postMessage({
+          type: 'error',
+          requestId: request.requestId,
+          message: error.message || 'Could not control the provider tab.'
+        });
+      }
     }
+  });
+
+  appPort.onDisconnect.addListener(() => {
+    for (const [requestId, providerPort] of providerPorts) {
+      providerPort.postMessage({ type: 'cancel', requestId });
+    }
+    providerPorts.clear();
+    cancelledRequests.clear();
   });
 });

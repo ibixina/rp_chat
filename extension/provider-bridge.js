@@ -35,8 +35,8 @@ function extractGeminiText(raw) {
   return result;
 }
 
-async function generateGemini(prompt, model, port, requestId) {
-  const initResponse = await fetch('/app', { credentials: 'include' });
+async function generateGemini(prompt, model, port, requestId, signal) {
+  const initResponse = await fetch('/app', { credentials: 'include', signal });
   const initHtml = await initResponse.text();
   const token = initHtml.match(/"SNlM0e":"([^"]+)"/)?.[1]
     || initHtml.match(/\["SNlM0e","([^"]+)"\]/)?.[1];
@@ -79,7 +79,8 @@ async function generateGemini(prompt, model, port, requestId) {
       'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8',
       'X-Same-Domain': '1'
     },
-    body
+    body,
+    signal
   });
   if (!response.ok) throw new Error(`Gemini Web returned HTTP ${response.status}. Sign in again and retry.`);
 
@@ -254,21 +255,33 @@ function pressEnter(input) {
   input.dispatchEvent(new KeyboardEvent('keyup', options));
 }
 
-function delay(milliseconds) {
-  return new Promise(resolve => setTimeout(resolve, milliseconds));
+function delay(milliseconds, signal) {
+  if (signal?.aborted) return Promise.reject(new DOMException('Generation cancelled.', 'AbortError'));
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, milliseconds);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new DOMException('Generation cancelled.', 'AbortError'));
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
 }
 
-async function waitForDeepSeekInput(timeoutMs = 15000) {
+async function waitForDeepSeekInput(timeoutMs = 15000, signal) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
+    signal?.throwIfAborted();
     const input = findDeepSeekInput();
     if (input) return input;
-    await delay(200);
+    await delay(200, signal);
   }
   throw new Error('DeepSeek chat input was not found. Sign in, open a chat, choose the model you want in DeepSeek, and retry.');
 }
 
-async function waitForDeepSeekReply(replySnapshot, port, requestId, timeoutMs = 170000) {
+async function waitForDeepSeekReply(replySnapshot, port, requestId, timeoutMs = 170000, signal) {
   const deadline = Date.now() + timeoutMs;
   const state = { sent: '' };
   let stableChecks = 0;
@@ -276,6 +289,7 @@ async function waitForDeepSeekReply(replySnapshot, port, requestId, timeoutMs = 
   let previousText = '';
 
   while (Date.now() < deadline) {
+    signal?.throwIfAborted();
     const stopButton = findStopButton();
     if (stopButton) observedStopButton = true;
     const candidate = findNewDeepSeekReply(replySnapshot);
@@ -291,20 +305,20 @@ async function waitForDeepSeekReply(replySnapshot, port, requestId, timeoutMs = 
         return text;
       }
     }
-    await delay(150);
+    await delay(150, signal);
   }
 
   if (state.sent) return state.sent;
   throw new Error('DeepSeek did not produce a visible response within three minutes.');
 }
 
-async function submitDeepSeekPrompt(prompt, port, requestId) {
-  const input = await waitForDeepSeekInput();
+async function submitDeepSeekPrompt(prompt, port, requestId, signal) {
+  const input = await waitForDeepSeekInput(15000, signal);
   const replySnapshot = snapshotDeepSeekReplies();
   setInputText(input, prompt);
-  await delay(100);
+  await delay(100, signal);
   pressEnter(input);
-  await delay(500);
+  await delay(500, signal);
 
   const value = input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement
     ? input.value
@@ -315,10 +329,10 @@ async function submitDeepSeekPrompt(prompt, port, requestId) {
     sendButton.click();
   }
 
-  return waitForDeepSeekReply(replySnapshot, port, requestId);
+  return waitForDeepSeekReply(replySnapshot, port, requestId, 170000, signal);
 }
 
-async function generateDeepSeekThroughUI(request, port, requestId) {
+async function generateDeepSeekThroughUI(request, port, requestId, signal) {
   const threadId = String(request.threadId || 'default');
   const route = currentDeepSeekRoute();
   const threads = loadDeepSeekThreads();
@@ -340,7 +354,7 @@ async function generateDeepSeekThroughUI(request, port, requestId) {
         systemFingerprint: await fingerprint(firstSystem?.content || '')
       };
 
-  await submitDeepSeekPrompt(promptState.prompt, port, requestId);
+  await submitDeepSeekPrompt(promptState.prompt, port, requestId, signal);
   threads[threadId] = {
     route: currentDeepSeekRoute(),
     instructionFingerprint: promptState.instructionFingerprint,
@@ -352,21 +366,34 @@ async function generateDeepSeekThroughUI(request, port, requestId) {
 
 chrome.runtime.onConnect.addListener(port => {
   if (!port.name.startsWith('persona-provider:')) return;
+  const controller = new AbortController();
+
+  port.onDisconnect.addListener(() => controller.abort());
   port.onMessage.addListener(async request => {
+    if (request?.type === 'cancel') {
+      controller.abort();
+      findStopButton()?.click();
+      return;
+    }
     if (request?.type !== 'generate') return;
+
     try {
       if (PROVIDER === 'gemini') {
-        await generateGemini(formatPrompt(request.messages || []), request.model, port, request.requestId);
+        await generateGemini(formatPrompt(request.messages || []), request.model, port, request.requestId, controller.signal);
       } else {
-        await generateDeepSeekThroughUI(request, port, request.requestId);
+        await generateDeepSeekThroughUI(request, port, request.requestId, controller.signal);
       }
       port.postMessage({ type: 'done', requestId: request.requestId });
     } catch (error) {
-      port.postMessage({
-        type: 'error',
-        requestId: request.requestId,
-        message: error.message || 'The web-chat request failed.'
-      });
+      if (error?.name === 'AbortError') {
+        port.postMessage({ type: 'cancelled', requestId: request.requestId });
+      } else {
+        port.postMessage({
+          type: 'error',
+          requestId: request.requestId,
+          message: error.message || 'The web-chat request failed.'
+        });
+      }
     }
   });
 });
