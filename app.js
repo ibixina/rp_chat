@@ -3972,6 +3972,57 @@ ${recMsgsStr}`;
     }
   }
 
+  function getGroupAvatarMembers(group) {
+    return (group?.memberIds || [])
+      .map(personaId => LocalDB.getPersona(personaId))
+      .filter(Boolean);
+  }
+
+  function renderGroupAvatarTiles(group) {
+    const members = getGroupAvatarMembers(group);
+    const visibleMembers = members.slice(0, 4);
+    const overflow = members.length - visibleMembers.length;
+    const tiles = visibleMembers.map(persona => {
+      const avatar = escapeHtml(persona.avatarUrl || './uploads/default-avatar.svg');
+      const initial = escapeHtml((persona.name || '?').trim().charAt(0).toUpperCase());
+      return `<span class="group-avatar-tile" title="${escapeHtml(persona.name)}">
+        <img src="${avatar}" alt="${escapeHtml(persona.name)}" onerror="this.onerror=null; this.src='./uploads/default-avatar.svg';">
+        <span class="group-avatar-initial">${initial}</span>
+      </span>`;
+    }).join('');
+    const fallback = !tiles
+      ? '<span class="group-avatar-empty"><i class="fa-solid fa-user-group"></i></span>'
+      : '';
+    const overflowBadge = overflow
+      ? `<span class="group-avatar-overflow">+${overflow}</span>`
+      : '';
+    return `${tiles}${fallback}${overflowBadge}`;
+  }
+
+  function renderGroupAvatarHtml(group, sizeClass = 'contact-group-avatar') {
+    const members = getGroupAvatarMembers(group);
+    const memberNames = members.map(persona => persona.name).join(', ');
+    return `<span class="group-avatar group-avatar-collage ${sizeClass}" data-member-count="${members.length}" aria-label="${escapeHtml(group?.name || 'Group')}${memberNames ? `, members: ${escapeHtml(memberNames)}` : ''}" title="${escapeHtml(memberNames || 'No current members')}">${renderGroupAvatarTiles(group)}</span>`;
+  }
+
+  function setCurrentGroupAvatar(group) {
+    if (!currentGroupAvatarEl) return;
+    const members = getGroupAvatarMembers(group);
+    currentGroupAvatarEl.className = 'group-avatar group-avatar-collage header-group-avatar';
+    currentGroupAvatarEl.dataset.memberCount = members.length;
+    currentGroupAvatarEl.setAttribute('aria-label', `${group?.name || 'Group'}${members.length ? `, members: ${members.map(persona => persona.name).join(', ')}` : ''}`);
+    currentGroupAvatarEl.title = members.map(persona => persona.name).join(', ') || 'No current members';
+    currentGroupAvatarEl.innerHTML = renderGroupAvatarTiles(group);
+  }
+
+  function clearCurrentGroupAvatar() {
+    if (!currentGroupAvatarEl) return;
+    currentGroupAvatarEl.className = 'group-avatar header-group-avatar hidden';
+    currentGroupAvatarEl.removeAttribute('aria-label');
+    currentGroupAvatarEl.title = '';
+    currentGroupAvatarEl.innerHTML = '<i class="fa-solid fa-user-group"></i>';
+  }
+
   function renderContactList(personaList = LocalDB.getPersonas(), groupList = LocalDB.getGroups()) {
     contactListEl.innerHTML = '';
     const entries = [
@@ -3996,7 +4047,7 @@ ${recMsgsStr}`;
       item.title = data.name;
 
       const avatarHtml = isGroup
-        ? `<span class="group-avatar contact-group-avatar"><i class="fa-solid fa-user-group"></i></span>`
+        ? renderGroupAvatarHtml(data)
         : `<div class="avatar-wrapper ${offline ? 'offline' : ''}">
             <img src="${data.avatarUrl || './uploads/default-avatar.svg'}" alt="${escapeHtml(data.name)}" class="contact-avatar" onerror="this.onerror=null; this.src='./uploads/default-avatar.svg';">
             <span class="online-badge ${offline ? 'offline' : ''}" title="${offline ? 'Offline' : 'Online'}"></span>
@@ -4008,7 +4059,6 @@ ${recMsgsStr}`;
         ${avatarHtml}
         <div class="contact-details">
           <div class="contact-top-row">
-            <span class="contact-name">${isGroup ? '<i class="fa-solid fa-user-group contact-type-icon"></i>' : ''}${escapeHtml(data.name)}</span>
             <span class="contact-time">${data.lastMessageTime || ''}</span>
           </div>
           <div class="contact-snippet ${isTyping ? 'typing' : ''}">
@@ -4058,7 +4108,7 @@ ${recMsgsStr}`;
     currentGroupAvatarEl?.classList.add('hidden');
     currentAvatarEl.src = persona.avatarUrl || './uploads/default-avatar.svg';
     currentAvatarEl.onerror = () => { currentAvatarEl.src = './uploads/default-avatar.svg'; };
-    currentNameEl.textContent = persona.name;
+    clearCurrentGroupAvatar();
     document.getElementById('header-online-badge')?.classList.remove('hidden');
     btnEditPersona.title = 'Edit Contact Details';
     btnDeletePersonaHeader.title = 'Delete Contact';
@@ -4101,6 +4151,7 @@ ${recMsgsStr}`;
     currentGroupAvatarEl?.classList.remove('hidden');
     document.getElementById('header-online-badge')?.classList.add('hidden');
     currentNameEl.textContent = group.name;
+    setCurrentGroupAvatar(group);
     btnEditPersona.title = 'Manage Group';
     btnDeletePersonaHeader.title = 'Delete Group';
     btnViewMemory.title = 'View Group Memory Log';
