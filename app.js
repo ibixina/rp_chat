@@ -4427,6 +4427,20 @@ ${recMsgsStr}`;
       </div>
     `;
 
+    const positionToolbar = () => {
+      const toolbar = bubble.querySelector('.message-actions-toolbar');
+      if (!toolbar || !chatFeedEl) return;
+      const feedRect = chatFeedEl.getBoundingClientRect();
+      const bubbleRect = bubble.getBoundingClientRect();
+      const toolbarHeight = Math.max(toolbar.offsetHeight, 34);
+      const spaceAbove = bubbleRect.top - feedRect.top;
+      const spaceBelow = feedRect.bottom - bubbleRect.bottom;
+      bubble.classList.toggle('toolbar-below', spaceAbove < toolbarHeight + 6 && spaceBelow > spaceAbove);
+    };
+    bubble.addEventListener('pointerenter', positionToolbar);
+    bubble.addEventListener('focusin', positionToolbar);
+    bubble.addEventListener('touchstart', positionToolbar, { passive: true });
+
     const errorRetryBtn = bubble.querySelector('.btn-retry-error-msg');
     if (errorRetryBtn) {
       errorRetryBtn.addEventListener('click', (e) => {

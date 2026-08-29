@@ -1053,6 +1053,16 @@ body, html {
   left: 4px;
 }
 
+.message-bubble.toolbar-below .message-actions-toolbar {
+  top: calc(100% + 4px);
+  transform: translateY(-4px);
+}
+
+.message-bubble.toolbar-below:hover .message-actions-toolbar,
+.message-bubble.toolbar-below:focus-within .message-actions-toolbar {
+  transform: translateY(0);
+}
+
 .message-actions-toolbar .emoji-btn {
   background: none;
   border: none;
