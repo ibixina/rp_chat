@@ -1821,6 +1821,26 @@ html, body {
   display: none;
 }
 
+
+.group-avatar-collage[data-member-count="2"] {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  padding: 2px;
+}
+
+.group-avatar-collage[data-member-count="2"] .group-avatar-tile {
+  width: 70%;
+  height: auto;
+  flex: 0 0 70%;
+  aspect-ratio: 1;
+}
+
+.group-avatar-collage[data-member-count="2"] .group-avatar-tile:first-child {
+  margin-right: -10%;
+  z-index: 1;
+}
 .group-avatar-empty {
   grid-column: 1 / -1;
   grid-row: 1 / -1;
