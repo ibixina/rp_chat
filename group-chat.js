@@ -127,10 +127,10 @@
     const group = getGroup(db, groupId);
     if (!group) return false;
     db.groupMessages[groupId] = [];
+    group.lastSyncedMessageCount = 0;
     if (clearMemory) {
       group.groupMemory = '';
       group.lastMemorySyncTime = null;
-      group.lastSyncedMessageCount = 0;
     }
     group.updatedAt = new Date().toISOString();
     return true;
@@ -373,6 +373,115 @@ Write only ${persona.name}'s next group-chat message. React to the latest user m
     return text.slice(0, 4000).trim();
   }
 
+  const GROUP_MEMORY_SECTIONS = [
+    'KEY GROUP EVENTS',
+    'GROUP DYNAMICS',
+    'OPEN PLANS',
+    'ESTABLISHED GROUP FACTS'
+  ];
+
+  function buildGroupMemoryPrompt({ group, messages, memberNameById }) {
+    const transcript = (messages || []).slice(-24).map(message => {
+      const speaker = message.sender === 'user'
+        ? 'User'
+        : message.sender === 'persona'
+          ? memberNameById?.[message.personaId] || 'Former member'
+          : 'System';
+      return `${speaker}: ${clipMessage(message.text, 500)}`;
+    }).join('\n');
+
+    return [
+      {
+        role: 'system',
+        content: `Maintain a concise factual memory for one group chat. Use only facts visible in the supplied group transcript and existing group memory. Never import or infer facts from private one-to-one chats.
+
+Return only these exact sections:
+[KEY GROUP EVENTS]
+- Important events, decisions, reveals, conflicts, or emotional turning points.
+
+[GROUP DYNAMICS]
+- Lasting relationships, tensions, alliances, or recurring interaction patterns visible in the group.
+
+[OPEN PLANS]
+- Unfinished plans, promises, questions, or topics the group intends to revisit.
+
+[ESTABLISHED GROUP FACTS]
+- Stable facts the group has learned or established.
+
+Rules:
+- Preserve still-relevant existing facts.
+- Remove resolved plans and superseded facts.
+- Ignore greetings, filler, and routine reactions.
+- Use names and short factual bullets.
+- Do not add commentary, a preamble, or a transcript.`
+      },
+      {
+        role: 'user',
+        content: `GROUP: ${group.name}
+MEMBERS: ${Object.values(memberNameById || {}).join(', ')}
+
+EXISTING GROUP MEMORY:
+${group.groupMemory || 'None'}
+
+RECENT GROUP TRANSCRIPT:
+${transcript || 'No messages.'}`
+      }
+    ];
+  }
+
+  function parseMemorySections(text) {
+    const value = String(text || '');
+    const result = {};
+    GROUP_MEMORY_SECTIONS.forEach((header, index) => {
+      const nextHeaders = GROUP_MEMORY_SECTIONS.slice(index + 1)
+        .map(name => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+        .join('|');
+      const end = nextHeaders ? `(?=\\n\\s*\\[(?:${nextHeaders})\\]|$)` : '$';
+      const match = value.match(new RegExp(`\\[${header}\\]\\s*([\\s\\S]*?)${end}`, 'i'));
+      if (match) result[header] = match[1].trim();
+    });
+    return result;
+  }
+
+  function sanitizeGroupMemory(output, existingMemory = '') {
+    let text = String(output || '').trim()
+      .replace(/^```(?:markdown|text)?\s*/i, '')
+      .replace(/\s*```$/i, '')
+      .trim();
+    if (text.startsWith('{') && text.endsWith('}')) {
+      try {
+        const parsed = JSON.parse(text);
+        text = String(parsed.memory || parsed.groupMemory || parsed.text || '').trim();
+      } catch (error) {}
+    }
+
+    const generated = parseMemorySections(text);
+    if (Object.keys(generated).length < 2) return '';
+    const existing = parseMemorySections(existingMemory);
+    const limits = {
+      'KEY GROUP EVENTS': 16,
+      'GROUP DYNAMICS': 10,
+      'OPEN PLANS': 10,
+      'ESTABLISHED GROUP FACTS': 16
+    };
+
+    return GROUP_MEMORY_SECTIONS.map(header => {
+      const source = generated[header] || existing[header] || 'None recorded.';
+      const seen = new Set();
+      const lines = source.split(/\r?\n/)
+        .map(line => line.trim().replace(/^[-*•]\s*/, ''))
+        .filter(line => {
+          const key = normalizeText(line);
+          if (!key || seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        })
+        .slice(0, limits[header])
+        .map(line => `- ${line}`);
+      return `[${header}]\n${lines.length ? lines.join('\n') : '- None recorded.'}`;
+    }).join('\n\n').slice(0, 12000);
+  }
+
   return {
     ensureCollections,
     normalizeMemberIds,
@@ -392,6 +501,8 @@ Write only ${persona.name}'s next group-chat message. React to the latest user m
     stableUnit,
     selectResponders,
     buildCharacterPrompt,
-    sanitizeCharacterOutput
+    sanitizeCharacterOutput,
+    buildGroupMemoryPrompt,
+    sanitizeGroupMemory
   };
 });

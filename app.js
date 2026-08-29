@@ -2039,6 +2039,59 @@ ${recMsgsStr}`;
     }
   }
 
+  async function triggerGroupMemorySummarization(groupId) {
+    const stateKey = `group:${groupId}`;
+    const group = LocalDB.getGroup(groupId);
+    const messages = LocalDB.getGroupMessages(groupId);
+    if (!group || !messages.length || memorySummarizingState[stateKey]) return;
+    memorySummarizingState[stateKey] = true;
+
+    try {
+      const settings = LocalDB.getSettings();
+      const usesDedicatedMemoryProvider = settings.memoryProvider && settings.memoryProvider !== 'inherit';
+      const provider = usesDedicatedMemoryProvider
+        ? settings.memoryProvider.toLowerCase()
+        : (settings.provider || 'openrouter').toLowerCase();
+      const model = usesDedicatedMemoryProvider
+        ? (settings.memoryModel || (provider === 'deepinfra' ? 'NousResearch/Hermes-3-Llama-3.1-70B' : 'nvidia/nemotron-3-ultra-550b-a55b:free'))
+        : settings.model;
+      const memberNameById = Object.fromEntries(
+        group.memberIds.map(personaId => [personaId, LocalDB.getPersona(personaId)?.name || 'Former member'])
+      );
+      const promptMessages = GroupChatCore.buildGroupMemoryPrompt({
+        group,
+        messages,
+        memberNameById
+      });
+      const output = await streamAiCompletion(promptMessages, {
+        ...settings,
+        provider,
+        model,
+        temperature: 0.2,
+        isMemory: true,
+        maxTokens: Math.min(settings.memoryBudget || 2500, 3000)
+      }, null, false, {
+        threadId: `${window.location.origin}|group:${groupId}:memory`,
+        messageId: messages[messages.length - 1]?.id || '',
+        memory: group.groupMemory || '',
+        instructionRevision: 'group-memory-v1',
+        mode: 'memory'
+      });
+      const memory = GroupChatCore.sanitizeGroupMemory(output, group.groupMemory);
+      if (!memory) {
+        logEvent('GROUP_MEMORY', `Ignored invalid memory output for ${group.name}`);
+        return;
+      }
+      LocalDB.updateGroupMemory(groupId, memory, messages[messages.length - 1]?.id || null);
+      if (activeGroupId === groupId && memoryTextarea) memoryTextarea.value = memory;
+      logEvent('GROUP_MEMORY', `Updated group memory for ${group.name}`, { messageCount: messages.length });
+    } catch (error) {
+      logEvent('GROUP_MEMORY', `Group memory update skipped: ${error.message || error}`);
+    } finally {
+      memorySummarizingState[stateKey] = false;
+    }
+  }
+
   // -------------------------------------------------------------
   // UI Application State & Elements
   // -------------------------------------------------------------
@@ -4849,6 +4902,12 @@ ${recMsgsStr}`;
           errors.push({ personaId: persona.id, message: error.message || String(error) });
           logEvent('GROUP_CHAT', `${persona.name} response skipped: ${error.message || error}`);
         }
+      }
+      const updatedGroup = LocalDB.getGroup(groupId);
+      const updatedMessages = LocalDB.getGroupMessages(groupId);
+      const messagesSinceMemory = Math.max(updatedMessages.length - (updatedGroup?.lastSyncedMessageCount || 0), 0);
+      if (!controller.signal.aborted && messagesSinceMemory >= MEMORY_AUTO_SYNC_INTERVAL) {
+        triggerGroupMemorySummarization(groupId);
       }
     } finally {
       generatingGroups[groupId] = false;

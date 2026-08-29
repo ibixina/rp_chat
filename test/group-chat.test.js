@@ -234,3 +234,53 @@ test('output sanitation removes wrappers and stops multi-character impersonation
   );
   assert.equal(GroupChatCore.sanitizeCharacterOutput('   ', 'Alice', ['Alice']), '');
 });
+
+test('group memory prompt contains only group-visible sources', () => {
+  const prompt = GroupChatCore.buildGroupMemoryPrompt({
+    group: { name: 'Friends', groupMemory: '[KEY GROUP EVENTS]\\n- Alice planned dinner.' },
+    memberNameById: { alice: 'Alice', bob: 'Bob' },
+    messages: [
+      { sender: 'user', text: 'Dinner at seven.' },
+      { sender: 'persona', personaId: 'alice', text: 'I will book it.' }
+    ]
+  });
+
+  assert.match(prompt[0].content, /Never import or infer facts from private/);
+  assert.match(prompt[1].content, /Alice: I will book it/);
+  assert.doesNotMatch(prompt[1].content, /storyMemory|private/i);
+});
+
+test('group memory sanitation normalizes sections, deduplicates facts, and preserves omitted sections', () => {
+  const existing = `[KEY GROUP EVENTS]
+- The group met.
+
+[GROUP DYNAMICS]
+- Alice trusts Bob.
+
+[OPEN PLANS]
+- Plan dinner.
+
+[ESTABLISHED GROUP FACTS]
+- Bob is vegetarian.`;
+  const generated = `Here is the update:
+[KEY GROUP EVENTS]
+* The group met.
+* The group chose Friday for dinner.
+* The group chose Friday for dinner.
+
+[OPEN PLANS]
+- Alice will reserve a table.
+
+[ESTABLISHED GROUP FACTS]
+- Bob is vegetarian.`;
+  const memory = GroupChatCore.sanitizeGroupMemory(generated, existing);
+
+  assert.match(memory, /\[KEY GROUP EVENTS\]\n- The group met\.\n- The group chose Friday/);
+  assert.equal((memory.match(/Friday for dinner/g) || []).length, 1);
+  assert.match(memory, /\[GROUP DYNAMICS\]\n- Alice trusts Bob\./);
+  assert.match(memory, /\[OPEN PLANS\]\n- Alice will reserve/);
+});
+
+test('invalid memory output is rejected instead of erasing established memory', () => {
+  assert.equal(GroupChatCore.sanitizeGroupMemory('Everything seems fine.', 'Existing memory'), '');
+});
