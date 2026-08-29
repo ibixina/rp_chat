@@ -4177,6 +4177,7 @@ ${recMsgsStr}`;
         ${avatarHtml}
         <div class="contact-details">
           <div class="contact-top-row">
+            <span class="contact-name">${isGroup ? '<i class="fa-solid fa-user-group contact-type-icon"></i>' : ''}${escapeHtml(data.name)}</span>
             <span class="contact-time">${data.lastMessageTime || ''}</span>
           </div>
           <div class="contact-snippet ${isTyping ? 'typing' : ''}">
