@@ -2129,3 +2129,63 @@ html, body {
     max-width: 86px;
   }
 }
+
+.model-library-heading {
+  flex-basis: 100%;
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.model-library-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 4px 7px 4px 9px;
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  color: var(--text-main);
+  background: var(--bg-input);
+  font-size: 11px;
+}
+
+.model-library-tag > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-library-remove,
+.model-library-restore {
+  flex-shrink: 0;
+  border: 0;
+  color: var(--text-muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.model-library-remove {
+  width: 17px;
+  height: 17px;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 10px;
+}
+
+.model-library-remove:hover {
+  color: #ea4335;
+  background: rgba(234, 67, 53, 0.12);
+}
+
+.model-library-restore {
+  padding: 4px 7px;
+  color: #53bdeb;
+  font-size: 11px;
+}
+
+.model-library-restore:hover {
+  color: var(--accent-green);
+  text-decoration: underline;
+}

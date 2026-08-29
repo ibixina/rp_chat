@@ -14,6 +14,7 @@ The app is fully client-side and can be hosted on GitHub Pages. Persona data, ch
 - **Story Memory Log** — automatic narrative summarization every 12 messages, editable at any time; keeps long-running roleplay physically and emotionally continuous without blowing the context window
 - **Realistic group chats** — create groups from existing characters, manage membership, reply to any message, and get a relevance-selected subset of in-character responses instead of an every-character pile-on
 - **Regenerate with instruction** — retry any AI response, optionally with a custom steering instruction (e.g. "be more sarcastic"); streaming overwrite replaces the old bubble in place
+- **Model library management** — remove unwanted preset or custom models from the selectors, restore preset models, and automatically fall back to an available preset when the active model is removed
 - **Three provider routes, any model string** — OpenRouter, DeepInfra, or signed-in Gemini/DeepSeek web tabs through the browser extension; the memory engine can inherit the persona route or use a separate API provider
 - **Full generation controls** — temperature, frequency/presence/repetition penalties, context budget, max message history, max output tokens
 - **Multi-device E2EE sync** — QR code or link pairing; all data is AES-GCM encrypted in the browser before it leaves the device

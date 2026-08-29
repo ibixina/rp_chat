@@ -1433,6 +1433,9 @@ document.addEventListener('DOMContentLoaded', () => {
       const localCustomModels = Array.isArray(localDB.settings?.customModels) ? localDB.settings.customModels : [];
       const remoteCustomModels = Array.isArray(remoteDB.settings?.customModels) ? remoteDB.settings.customModels : [];
       const mergedCustomModels = Array.from(new Set([...localCustomModels, ...remoteCustomModels]));
+      const localRemovedPresets = Array.isArray(localDB.settings?.removedPresetModels) ? localDB.settings.removedPresetModels : [];
+      const remoteRemovedPresets = Array.isArray(remoteDB.settings?.removedPresetModels) ? remoteDB.settings.removedPresetModels : [];
+      const mergedRemovedPresets = Array.from(new Set([...localRemovedPresets, ...remoteRemovedPresets]));
 
       const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
       const currentSyncSettings = {
@@ -1451,7 +1454,7 @@ document.addEventListener('DOMContentLoaded', () => {
         ...(remoteDB.settings || {}),
         ...(localDB.settings || {}),
         customModels: mergedCustomModels,
-        ...currentSyncSettings
+        removedPresetModels: mergedRemovedPresets,
       };
 
       const mergedDB = {
@@ -3160,6 +3163,35 @@ ${recMsgsStr}`;
     return list.filter(m => m && !BUILTIN_PRESET_VALUES.has(m));
   }
 
+  function getRemovedPresetModels() {
+    const settings = LocalDB.getSettings();
+    return new Set(Array.isArray(settings.removedPresetModels) ? settings.removedPresetModels : []);
+  }
+
+  function isPresetRemoved(model) {
+    return getRemovedPresetModels().has(model);
+  }
+
+  function getAvailablePresetModels(provider) {
+    const removed = getRemovedPresetModels();
+    return (PROVIDER_PRESET_MODELS[provider] || PROVIDER_PRESET_MODELS.openrouter)
+      .filter(preset => !removed.has(preset.value));
+  }
+
+  function getFallbackModel(provider, preferred = '') {
+    const available = getAvailablePresetModels(provider);
+    if (preferred && !BUILTIN_PRESET_VALUES.has(preferred)) return preferred;
+    if (preferred && available.some(preset => preset.value === preferred)) return preferred;
+    const defaultModel = getDefaultProviderModel(provider);
+    return available.find(preset => preset.value === defaultModel)?.value || available[0]?.value || '';
+  }
+
+  function getActiveMemoryProvider() {
+    if (document.getElementById('card-mem-deepinfra')?.classList.contains('active')) return 'deepinfra';
+    if (document.getElementById('card-mem-openrouter')?.classList.contains('active')) return 'openrouter';
+    return getActiveChatProvider();
+  }
+
   function saveCustomModel(modelStr) {
     const val = (modelStr || '').trim();
     if (!val || val === 'custom' || BUILTIN_PRESET_VALUES.has(val)) return;
@@ -3173,61 +3205,96 @@ ${recMsgsStr}`;
   }
 
   function removeCustomModel(modelStr) {
-    let customModels = getSavedCustomModels().filter(m => m !== modelStr);
+    const customModels = getSavedCustomModels().filter(m => m !== modelStr);
     LocalDB.saveSettings({ customModels });
     renderCustomModelsInSelects();
     showToast(`Removed custom model '${modelStr}'`);
   }
 
+  function removePresetModel(modelStr, provider) {
+    const available = getAvailablePresetModels(provider);
+    if (available.length <= 1) {
+      showToast('Keep at least one preset model available for this provider.', 'info');
+      return;
+    }
+    const removed = [...getRemovedPresetModels(), modelStr];
+    LocalDB.saveSettings({ removedPresetModels: [...new Set(removed)] });
+    const fallback = getFallbackModel(provider);
+    if (settingsProviderModels[provider] === modelStr) settingsProviderModels[provider] = fallback;
+    renderCustomModelsInSelects();
+    if (getActiveChatProvider() === provider) setModelUI(settingsProviderModels[provider]);
+    if (getActiveMemoryProvider() === provider) setMemModelUI(settingsMemProviderModels[provider] || fallback);
+    showToast(`Removed preset model '${modelStr}'`);
+  }
+
+  function restorePresetModels() {
+    LocalDB.saveSettings({ removedPresetModels: [] });
+    renderCustomModelsInSelects();
+    showToast('Restored preset models');
+  }
+
+  function createModelLibraryTag({ model, label, provider, preset }) {
+    const tag = document.createElement('span');
+    tag.className = 'model-library-tag';
+    const name = document.createElement('span');
+    name.textContent = preset ? label : `Custom: ${model}`;
+    name.title = model;
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'model-library-remove';
+    remove.innerHTML = '<i class="fa-solid fa-xmark"></i>';
+    remove.setAttribute('aria-label', `Remove ${preset ? 'preset' : 'custom'} model ${model}`);
+    remove.title = `Remove ${preset ? 'preset' : 'custom'} model`;
+    remove.addEventListener('click', () => {
+      if (preset) removePresetModel(model, provider);
+      else removeCustomModel(model);
+    });
+    tag.append(name, remove);
+    return tag;
+  }
+
   function renderCustomModelsInSelects() {
     const customModels = getSavedCustomModels();
     const activeProv = getActiveChatProvider();
-    
-    let activeMemProvCard = 'openrouter';
-    if (document.getElementById('card-mem-deepinfra')?.classList.contains('active')) {
-      activeMemProvCard = 'deepinfra';
-    } else if (document.getElementById('card-mem-openrouter')?.classList.contains('active')) {
-      activeMemProvCard = 'openrouter';
-    } else {
-      activeMemProvCard = activeProv;
-    }
-
+    const activeMemProv = getActiveMemoryProvider();
     const selectConfigs = [
       { id: 'settings-model-preset', provider: activeProv },
-      { id: 'settings-memory-model-preset', provider: activeMemProvCard }
+      { id: 'settings-memory-model-preset', provider: activeMemProv }
     ];
 
     selectConfigs.forEach(({ id, provider }) => {
       const select = document.getElementById(id);
       if (!select) return;
-
       const currentVal = select.value;
-      const presets = PROVIDER_PRESET_MODELS[provider] || PROVIDER_PRESET_MODELS.openrouter;
-
+      const presets = getAvailablePresetModels(provider);
       select.innerHTML = '';
 
-      presets.forEach(p => {
-        const opt = document.createElement('option');
-        opt.value = p.value;
-        opt.textContent = p.label;
-        select.appendChild(opt);
+      presets.forEach(preset => {
+        const option = document.createElement('option');
+        option.value = preset.value;
+        option.textContent = preset.label;
+        select.appendChild(option);
       });
 
-      customModels.forEach(m => {
-        const opt = document.createElement('option');
-        opt.value = m;
-        opt.textContent = `Custom: ${m}`;
-        opt.className = 'user-custom-model-option';
-        select.appendChild(opt);
+      customModels.forEach(model => {
+        const option = document.createElement('option');
+        option.value = model;
+        option.textContent = `Custom: ${model}`;
+        option.className = 'user-custom-model-option';
+        select.appendChild(option);
       });
 
-      const customOpt = document.createElement('option');
-      customOpt.value = 'custom';
-      customOpt.textContent = '+ Custom Model Identifier...';
-      select.appendChild(customOpt);
+      const customOption = document.createElement('option');
+      customOption.value = 'custom';
+      customOption.textContent = '+ Custom Model Identifier...';
+      select.appendChild(customOption);
 
-      if (currentVal && Array.from(select.options).some(o => o.value === currentVal)) {
+      if (Array.from(select.options).some(option => option.value === currentVal)) {
         select.value = currentVal;
+      } else if (presets[0]) {
+        select.value = presets[0].value;
+      } else {
+        select.value = 'custom';
       }
     });
 
@@ -3236,48 +3303,79 @@ ${recMsgsStr}`;
 
   function renderSavedCustomModelsTags() {
     const customModels = getSavedCustomModels();
-    const containers = [
-      document.getElementById('saved-custom-models-container'),
-      document.getElementById('saved-mem-custom-models-container')
+    const removed = getRemovedPresetModels();
+    const configs = [
+      {
+        container: document.getElementById('saved-custom-models-container'),
+        provider: getActiveChatProvider(),
+        heading: 'Available chat models'
+      },
+      {
+        container: document.getElementById('saved-mem-custom-models-container'),
+        provider: getActiveMemoryProvider(),
+        heading: 'Available memory models'
+      }
     ];
 
-    containers.forEach(container => {
+    configs.forEach(({ container, provider, heading }) => {
       if (!container) return;
       container.innerHTML = '';
-      if (customModels.length === 0) return;
+      const presets = PROVIDER_PRESET_MODELS[provider] || [];
+      const availablePresets = presets.filter(preset => !removed.has(preset.value));
+      const hasRemovedForProvider = presets.some(preset => removed.has(preset.value));
+      if (!availablePresets.length && !customModels.length) return;
 
-      customModels.forEach(m => {
-        const tag = document.createElement('span');
-        tag.className = 'badge';
-        tag.style.cssText = 'background: var(--bg-input, #2a3942); color: var(--text-main, #e9edef); border: 1px solid var(--border-color, #222d34); font-size: 11.5px; padding: 4px 8px; border-radius: 12px; display: inline-flex; align-items: center; gap: 6px; margin-right: 4px; margin-bottom: 4px;';
-        tag.innerHTML = `<span>${m}</span><i class="fa-solid fa-xmark btn-delete-custom-tag" data-model="${m}" style="cursor: pointer; color: #ea4335; font-size: 12px;" title="Remove model"></i>`;
+      const headingEl = document.createElement('div');
+      headingEl.className = 'model-library-heading';
+      headingEl.textContent = `${heading} (${provider})`;
+      container.appendChild(headingEl);
 
-        tag.querySelector('.btn-delete-custom-tag')?.addEventListener('click', (e) => {
-          e.stopPropagation();
-          removeCustomModel(m);
-        });
-
-        container.appendChild(tag);
+      availablePresets.forEach(preset => {
+        container.appendChild(createModelLibraryTag({
+          model: preset.value,
+          label: preset.label,
+          provider,
+          preset: true
+        }));
       });
+      customModels.forEach(model => {
+        container.appendChild(createModelLibraryTag({
+          model,
+          label: model,
+          provider,
+          preset: false
+        }));
+      });
+
+      if (hasRemovedForProvider) {
+        const restore = document.createElement('button');
+        restore.type = 'button';
+        restore.className = 'model-library-restore';
+        restore.innerHTML = '<i class="fa-solid fa-rotate-left"></i> Restore presets';
+        restore.addEventListener('click', restorePresetModels);
+        container.appendChild(restore);
+      }
     });
   }
 
   function setModelUI(modelVal) {
+    const provider = getActiveChatProvider();
+    const resolvedModel = getFallbackModel(provider, modelVal);
     renderCustomModelsInSelects();
     const modelPreset = document.getElementById('settings-model-preset');
     const modelCustom = document.getElementById('settings-model-custom');
     const customGroup = document.getElementById('custom-model-input-group');
     if (!modelPreset) return;
 
-    const hasOpt = Array.from(modelPreset.options).some(o => o.value === modelVal);
+    const hasOpt = Array.from(modelPreset.options).some(option => option.value === resolvedModel);
     if (hasOpt) {
-      modelPreset.value = modelVal;
+      modelPreset.value = resolvedModel;
       customGroup?.classList.add('hidden');
       if (modelCustom) modelCustom.value = '';
     } else {
       modelPreset.value = 'custom';
       customGroup?.classList.remove('hidden');
-      if (modelCustom) modelCustom.value = modelVal || '';
+      if (modelCustom) modelCustom.value = resolvedModel || modelVal || '';
     }
   }
 
@@ -3290,21 +3388,23 @@ ${recMsgsStr}`;
   }
 
   function setMemModelUI(modelVal) {
+    const provider = getActiveMemoryProvider();
+    const resolvedModel = getFallbackModel(provider, modelVal);
     renderCustomModelsInSelects();
     const memModelPreset = document.getElementById('settings-memory-model-preset');
     const memModelCustom = document.getElementById('settings-memory-model-custom');
     const memCustomGroup = document.getElementById('mem-custom-model-input-group');
     if (!memModelPreset) return;
 
-    const hasOpt = Array.from(memModelPreset.options).some(o => o.value === modelVal);
+    const hasOpt = Array.from(memModelPreset.options).some(option => option.value === resolvedModel);
     if (hasOpt) {
-      memModelPreset.value = modelVal;
+      memModelPreset.value = resolvedModel;
       memCustomGroup?.classList.add('hidden');
       if (memModelCustom) memModelCustom.value = '';
     } else {
       memModelPreset.value = 'custom';
       memCustomGroup?.classList.remove('hidden');
-      if (memModelCustom) memModelCustom.value = modelVal || '';
+      if (memModelCustom) memModelCustom.value = resolvedModel || modelVal || '';
     }
   }
 
@@ -3341,15 +3441,15 @@ ${recMsgsStr}`;
 
     let openrouterModel = settings.lastOpenRouterModel || (provider === 'openrouter' ? settings.model : 'sao10k/l3.3-euryale-70b');
     if (isUnavailablePreset('openrouter', openrouterModel)) openrouterModel = getDefaultProviderModel('openrouter');
-    settingsProviderModels.openrouter = openrouterModel;
+    openrouterModel = getFallbackModel('openrouter', openrouterModel);
 
     let deepinfraModel = settings.lastDeepInfraModel || (provider === 'deepinfra' ? settings.model : 'NousResearch/Hermes-3-Llama-3.1-70B');
     if (isUnavailablePreset('deepinfra', deepinfraModel)) deepinfraModel = getDefaultProviderModel('deepinfra');
-    settingsProviderModels.deepinfra = deepinfraModel;
+    deepinfraModel = getFallbackModel('deepinfra', deepinfraModel);
 
     let webBridgeModel = settings.lastWebBridgeModel || (provider === 'webbridge' ? settings.model : 'deepseek-chat');
     if (isUnavailablePreset('webbridge', webBridgeModel)) webBridgeModel = getDefaultProviderModel('webbridge');
-    settingsProviderModels.webbridge = webBridgeModel;
+    webBridgeModel = getFallbackModel('webbridge', webBridgeModel);
 
     setModelUI(settingsProviderModels[provider] || getDefaultProviderModel(provider));
 
@@ -3505,6 +3605,7 @@ ${recMsgsStr}`;
     if (!nextModel || isUnavailablePreset(newProvider, nextModel)) {
       nextModel = getDefaultProviderModel(newProvider);
     }
+    nextModel = getFallbackModel(newProvider, nextModel);
     settingsProviderModels[newProvider] = nextModel;
     setModelUI(nextModel);
   }
