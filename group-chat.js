@@ -261,15 +261,15 @@
     const invitesGroup = /^(?:hey|hi|hello|yo|good morning|good afternoon|good evening)[!?.\s]*$/.test(normalizedMessage)
       || /\b(?:everyone|everybody|anyone|anybody|you all|you guys|all of you|both of you|who wants|thoughts)\b/.test(normalizedMessage);
     const maximum = Math.min(3, members.length);
-    const minimum = invitesGroup ? Math.min(2, maximum) : 1;
     const selected = [ranked[0]];
     for (let index = 1; index < ranked.length && selected.length < maximum; index += 1) {
       const candidate = ranked[index];
       const strongReason = candidate.reason === 'mentioned' || candidate.reason === 'topic-relevance';
       const baseChimeChance = members.length === 2 ? 0.42 : members.length === 3 ? 0.28 : 0.18;
-      const chimeChance = directPersonaId ? baseChimeChance * 0.65 : baseChimeChance;
+      const invitationBoost = invitesGroup ? 0.24 : 0;
+      const chimeChance = Math.min(0.78, (baseChimeChance + invitationBoost) * (directPersonaId ? 0.65 : 1));
       const spontaneousChime = stableUnit(`${seed}|chime|${candidate.personaId}`) < chimeChance;
-      if (selected.length < minimum || strongReason || spontaneousChime) selected.push(candidate);
+      if (strongReason || spontaneousChime) selected.push(candidate);
     }
     return selected;
   }
@@ -376,14 +376,19 @@ END GROUP TRANSCRIPT`;
         ? `HUMAN USER addressed YOU, ${persona.name}, by name.`
         : selectionReason === 'topic-relevance'
           ? `The HUMAN USER's message is relevant to ${persona.name}, so you may chime in as yourself.`
-          : `${persona.name} is taking a natural turn to respond to HUMAN USER.`;
+          : selectionReason === 'manual-character'
+            ? `HUMAN USER explicitly selected ${persona.name} from the character tray and asked YOU to respond.`
+            : `${persona.name} is taking a natural turn to respond to HUMAN USER.`;
 
     const isNudge = !!userMessage?.isNudge;
+    const isCharacterPrompt = !!userMessage?.isCharacterPrompt;
     const turnPrompt = `CURRENT TRIGGER
 AUTHOR: HUMAN USER
-${isNudge
-  ? 'HUMAN USER sent no text and requested the next natural group-chat turn. Continue from the visible conversation without mentioning this instruction.'
-  : `MESSAGE: \"${clipMessage(userMessage?.text, 600)}\"`}
+${isCharacterPrompt
+  ? `HUMAN USER selected ${persona.name} from the character tray to request a response. No visible user message was added.`
+  : isNudge
+    ? 'HUMAN USER sent no text and requested the next natural group-chat turn. Continue from the visible conversation without mentioning this instruction.'
+    : `MESSAGE: \"${clipMessage(userMessage?.text, 600)}\"`}
 
 ROUTING
 ${routing}
@@ -391,9 +396,11 @@ ${replyContext}
 ${reactedNames.length ? `Messages already sent after this trigger by: ${reactedNames.join(', ')}. Do not repeat them and do not treat them as HUMAN USER's request.` : ''}
 
 TASK
-${isNudge
-  ? `Write ${persona.name}'s next natural group-chat message based on the visible transcript. Address HUMAN USER or the group as context requires.`
-  : `Write ${persona.name}'s response to HUMAN USER's current trigger message.`} You are ${persona.name}; do not write what HUMAN USER says and do not answer as ${otherNames.join(' or ') || 'another person'}. Begin immediately with ${persona.name}'s message body.${persona.endInstruction ? `\\nMandatory character instruction: ${persona.endInstruction.trim()}` : ''}`;
+${isCharacterPrompt
+  ? `Write ${persona.name}'s next relevant group-chat message in response to being explicitly prompted.`
+  : isNudge
+    ? `Write ${persona.name}'s next natural group-chat message based on the visible transcript. Address HUMAN USER or the group as context requires.`
+    : `Write ${persona.name}'s response to HUMAN USER's current trigger message.`} You are ${persona.name}; do not write what HUMAN USER says and do not answer as ${otherNames.join(' or ') || 'another person'}. Begin immediately with ${persona.name}'s message body.${persona.endInstruction ? `\\nMandatory character instruction: ${persona.endInstruction.trim()}` : ''}`;
 
     return [
       { role: 'system', content: identityPrompt },

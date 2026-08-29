@@ -2135,6 +2135,7 @@ ${recMsgsStr}`;
   const generatingPersonas = {};
   const generatingGroups = {};
   let pendingGroupReply = null;
+  let activeGroupTrayPersonaId = null;
   const activeStreamingState = {};
   const memorySummarizingState = {};
   const generationControllers = {};
@@ -2199,6 +2200,7 @@ ${recMsgsStr}`;
   const messageInput = document.getElementById('message-input');
   const btnSend = document.getElementById('btn-send');
   const btnStopGeneration = document.getElementById('btn-stop-generation');
+  const groupCharacterTray = document.getElementById('group-character-tray');
   const replyComposer = document.getElementById('reply-composer');
   const replyComposerSender = document.getElementById('reply-composer-sender');
   const replyComposerText = document.getElementById('reply-composer-text');
@@ -3892,6 +3894,47 @@ ${recMsgsStr}`;
     btnSend.classList.toggle('hidden', isGenerating);
     btnStopGeneration.classList.toggle('hidden', !isGenerating);
     if (!isGenerating) btnStopGeneration.disabled = false;
+    updateGroupCharacterTrayState();
+  }
+
+  function updateGroupCharacterTrayState() {
+    if (!groupCharacterTray || !activeGroupId) return;
+    const isGenerating = !!generatingGroups[activeGroupId];
+    groupCharacterTray.querySelectorAll('.character-tray-chip').forEach(button => {
+      button.disabled = isGenerating;
+      button.classList.toggle('is-typing', isGenerating && button.dataset.personaId === activeGroupTrayPersonaId);
+    });
+  }
+
+  function renderGroupCharacterTray(groupId = activeGroupId) {
+    if (!groupCharacterTray || !groupId) {
+      groupCharacterTray?.classList.add('hidden');
+      if (groupCharacterTray) groupCharacterTray.innerHTML = '';
+      return;
+    }
+    const group = LocalDB.getGroup(groupId);
+    const members = (group?.memberIds || []).map(personaId => LocalDB.getPersona(personaId)).filter(Boolean);
+    if (!members.length) {
+      groupCharacterTray.classList.add('hidden');
+      groupCharacterTray.innerHTML = '';
+      return;
+    }
+    groupCharacterTray.innerHTML = `
+      <span class="character-tray-caption" title="Prompt a character to respond">
+        <i class="fa-solid fa-comment-dots"></i><span>Prompt</span>
+      </span>
+      ${members.map(persona => `
+        <button type="button" class="character-tray-chip" data-persona-id="${escapeHtml(persona.id)}" title="Prompt ${escapeHtml(persona.name)} to respond" aria-label="Prompt ${escapeHtml(persona.name)} to respond">
+          <img src="${escapeHtml(persona.avatarUrl || './uploads/default-avatar.svg')}" alt="" onerror="this.onerror=null; this.src='./uploads/default-avatar.svg';">
+          <span class="character-tray-name">${escapeHtml(persona.name)}</span>
+        </button>
+      `).join('')}
+    `;
+    groupCharacterTray.querySelectorAll('.character-tray-chip').forEach(button => {
+      button.addEventListener('click', () => promptGroupCharacter(button.dataset.personaId));
+    });
+    groupCharacterTray.classList.remove('hidden');
+    updateGroupCharacterTrayState();
   }
 
   function updateHeaderStatus(personaId) {
@@ -4004,6 +4047,7 @@ ${recMsgsStr}`;
     activePersonaId = personaId;
     activeGroupId = null;
     clearPendingGroupReply();
+    renderGroupCharacterTray(null);
     const persona = LocalDB.getPersona(personaId);
     if (!persona) return;
 
@@ -4063,6 +4107,7 @@ ${recMsgsStr}`;
     btnExportChat.title = 'Export Group Chat JSON';
     const deleteIcon = btnDeletePersonaHeader.querySelector('i');
     if (deleteIcon) deleteIcon.className = 'fa-solid fa-users-slash';
+    renderGroupCharacterTray(groupId);
     updateGroupHeaderStatus(groupId);
     updateGenerationControls(`group:${groupId}`);
     renderContactList();
@@ -4748,6 +4793,7 @@ ${recMsgsStr}`;
   }
 
   function showTypingIndicator() {
+
     removeTypingIndicator();
     const indicator = document.createElement('div');
     indicator.className = 'message-bubble persona typing-indicator-bubble';
@@ -4768,6 +4814,28 @@ ${recMsgsStr}`;
   // -------------------------------------------------------------
   // AI Streaming Generators: Send, Retry, Continue
   // -------------------------------------------------------------
+  async function promptGroupCharacter(personaId) {
+    const groupId = activeGroupId;
+    const group = groupId ? LocalDB.getGroup(groupId) : null;
+    if (!group || generatingGroups[groupId] || !group.memberIds.includes(personaId)) return;
+    const characterPrompt = {
+      id: `character-prompt-${crypto.randomUUID()}`,
+      sender: 'user',
+      text: '',
+      isNudge: true,
+      isCharacterPrompt: true,
+      ...(pendingGroupReply ? {
+        replyToId: pendingGroupReply.id,
+        replyToSnapshot: { ...pendingGroupReply }
+      } : {})
+    };
+    clearPendingGroupReply();
+    await generateGroupResponses(groupId, null, {
+      userMessage: characterPrompt,
+      forcedPersonaId: personaId,
+      selectionReason: 'manual-character'
+    });
+  }
   function setPendingGroupReply(message) {
     if (!activeGroupId || !message) return;
     const sender = message.sender === 'persona'
@@ -5126,11 +5194,12 @@ ${recMsgsStr}`;
     });
     if (options.forcedPersonaId) {
       selected = groupPersonas.some(persona => persona.id === options.forcedPersonaId)
-        ? [{ personaId: options.forcedPersonaId, score: 1000, reason: 'manual-retry' }]
+        ? [{ personaId: options.forcedPersonaId, score: 1000, reason: options.selectionReason || 'manual-retry' }]
         : [];
     }
     const responses = [];
     const errors = [];
+    activeGroupTrayPersonaId = selected[0]?.personaId || null;
 
     if (activeGroupId === groupId) {
       currentStatusEl.textContent = selected.length
@@ -5150,6 +5219,8 @@ ${recMsgsStr}`;
 
         if (activeGroupId === groupId) {
           currentStatusEl.textContent = `${persona.name} is typing...`;
+          activeGroupTrayPersonaId = persona.id;
+          updateGroupCharacterTrayState();
         }
 
         const memberNameById = Object.fromEntries(
@@ -5239,7 +5310,7 @@ ${recMsgsStr}`;
             personaName: persona.name,
             text,
             timestamp: new Date().toISOString(),
-            ...(!userMessageId && userMessage.isNudge ? { nudgeTrigger: true } : {}),
+            ...(!userMessageId && userMessage.isNudge ? { nudgeTrigger: true, characterPromptTrigger: !!userMessage.isCharacterPrompt } : {}),
             ...(userMessageId ? { respondingToId: userMessageId } : {}),
             ...(options.customInstruction?.trim() ? { retryInstruction: options.customInstruction.trim() } : {}),
             ...(userMessageId && isDirectResponse ? {
@@ -5268,7 +5339,7 @@ ${recMsgsStr}`;
             text: `⚠️ ${persona.name} could not respond: ${errorMessage}`,
             timestamp: new Date().toISOString(),
             isError: true,
-            ...(!userMessageId && userMessage.isNudge ? { nudgeTrigger: true } : {}),
+            ...(!userMessageId && userMessage.isNudge ? { nudgeTrigger: true, characterPromptTrigger: !!userMessage.isCharacterPrompt } : {}),
             ...(userMessageId ? { respondingToId: userMessageId } : {}),
             ...(options.customInstruction?.trim() ? { retryInstruction: options.customInstruction.trim() } : {})
           });
@@ -5283,6 +5354,7 @@ ${recMsgsStr}`;
       }
     } finally {
       generatingGroups[groupId] = false;
+      activeGroupTrayPersonaId = null;
       delete generationControllers[`group:${groupId}`];
       if (activeGroupId === groupId) {
         removeTypingIndicator();
@@ -5318,7 +5390,7 @@ ${recMsgsStr}`;
     const response = messages[responseIndex];
     const trigger = findGroupTriggerMessage(messages, responseIndex);
     const nudge = !trigger && response.nudgeTrigger
-      ? { id: `group-nudge-${crypto.randomUUID()}`, sender: 'user', text: '', isNudge: true }
+      ? { id: `group-nudge-${crypto.randomUUID()}`, sender: 'user', text: '', isNudge: true, isCharacterPrompt: !!response.characterPromptTrigger }
       : null;
     if (!trigger && !nudge) return;
 
@@ -5327,7 +5399,8 @@ ${recMsgsStr}`;
     const replacements = await generateGroupResponses(groupId, trigger?.id || null, {
       userMessage: nudge || undefined,
       forcedPersonaId: response.personaId,
-      customInstruction
+      customInstruction,
+      selectionReason: response.characterPromptTrigger ? 'manual-character' : 'manual-retry'
     });
     if (!replacements.length) {
       LocalDB.setGroupMessages(groupId, messages);
@@ -5359,7 +5432,7 @@ ${recMsgsStr}`;
     if (responseIndex < 0) return;
     const storedTrigger = findGroupTriggerMessage(messages, responseIndex);
     const trigger = storedTrigger || (message.nudgeTrigger
-      ? { id: `group-nudge-${crypto.randomUUID()}`, sender: 'user', text: '', isNudge: true }
+      ? { id: `group-nudge-${crypto.randomUUID()}`, sender: 'user', text: '', isNudge: true, isCharacterPrompt: !!message.characterPromptTrigger }
       : null);
     const persona = LocalDB.getPersona(message.personaId);
     const group = LocalDB.getGroup(groupId);
@@ -5373,6 +5446,8 @@ ${recMsgsStr}`;
     currentStatusEl.textContent = `${persona.name} is typing...`;
     currentStatusEl.className = 'status-subtitle typing';
 
+    activeGroupTrayPersonaId = persona.id;
+    updateGroupCharacterTrayState();
     try {
       const memberNameById = Object.fromEntries(
         group.memberIds.map(memberId => [memberId, LocalDB.getPersona(memberId)?.name || 'Former member'])
@@ -5396,7 +5471,7 @@ ${recMsgsStr}`;
         personalMessages: LocalDB.getMessages(persona.id),
         userMessage: trigger,
         replyTarget,
-        selectionReason: 'manual-retry'
+        selectionReason: message.characterPromptTrigger ? 'manual-character' : 'manual-retry'
       });
       promptMessages = [
         ...promptMessages,
@@ -5423,6 +5498,7 @@ ${recMsgsStr}`;
       if (error?.name !== 'AbortError') showToast(error.message || String(error), 'error');
     } finally {
       generatingGroups[groupId] = false;
+      activeGroupTrayPersonaId = null;
       delete generationControllers[`group:${groupId}`];
       if (activeGroupId === groupId) {
         removeTypingIndicator();
@@ -5936,6 +6012,7 @@ ${recMsgsStr}`;
         if (activeGroupId === groupId) {
           activeGroupId = null;
           clearPendingGroupReply();
+          renderGroupCharacterTray(null);
           activeChatViewEl.classList.add('hidden');
           emptyStateEl.classList.remove('hidden');
         }
