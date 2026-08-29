@@ -1744,7 +1744,7 @@ html, body {
   overflow: hidden;
   padding: 1px;
   border: 2px solid var(--bg-header);
-  background: #005c4b;
+  background: var(--bg-header);
 }
 
 .group-avatar-collage[data-member-count="1"] {
@@ -2038,16 +2038,54 @@ html, body {
   opacity: 1;
 }
 
-.character-tray-chip img,
+.character-tray-avatar {
+  position: relative;
+  display: inline-flex;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+}
+
+.character-tray-avatar img {
+  width: 26px;
+  height: 26px;
+  object-fit: cover;
+  border-radius: 50%;
+}
+
+.character-tray-status {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 8px;
+  height: 8px;
+  border: 2px solid var(--bg-input);
+  border-radius: 50%;
+  background: #8696a0;
+}
+
+.character-tray-status.online {
+  background: #25d366;
+}
+
+.character-tray-status.offline {
+  background: #8696a0;
+}
+
+.character-tray-status.typing {
+  background: #53bdeb;
+  box-shadow: 0 0 0 2px rgba(83, 189, 235, 0.18);
+}
+
+.character-tray-chip.is-typing .character-tray-status {
+  border-color: var(--bg-input);
+}
+
 .character-tray-fallback {
   width: 26px;
   height: 26px;
   flex-shrink: 0;
   border-radius: 50%;
-}
-
-.character-tray-chip img {
-  object-fit: cover;
 }
 
 .character-tray-fallback {

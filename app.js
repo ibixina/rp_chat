@@ -4002,8 +4002,17 @@ ${recMsgsStr}`;
     if (!groupCharacterTray || !activeGroupId) return;
     const isGenerating = !!generatingGroups[activeGroupId];
     groupCharacterTray.querySelectorAll('.character-tray-chip').forEach(button => {
+      const isSelectedTyping = isGenerating && button.dataset.personaId === activeGroupTrayPersonaId;
       button.disabled = isGenerating;
-      button.classList.toggle('is-typing', isGenerating && button.dataset.personaId === activeGroupTrayPersonaId);
+      button.classList.toggle('is-typing', isSelectedTyping);
+      const status = button.querySelector('.character-tray-status');
+      if (status) {
+        status.classList.toggle('typing', isSelectedTyping);
+        status.classList.toggle('online', !isSelectedTyping && status.dataset.baseStatus === 'online');
+        status.classList.toggle('offline', !isSelectedTyping && status.dataset.baseStatus === 'offline');
+        status.title = isSelectedTyping ? 'Typing...' : status.dataset.baseStatus;
+      }
+      button.setAttribute('aria-busy', isSelectedTyping ? 'true' : 'false');
     });
   }
 
@@ -4024,12 +4033,20 @@ ${recMsgsStr}`;
       <span class="character-tray-caption" title="Prompt a character to respond">
         <i class="fa-solid fa-comment-dots"></i><span>Prompt</span>
       </span>
-      ${members.map(persona => `
-        <button type="button" class="character-tray-chip" data-persona-id="${escapeHtml(persona.id)}" title="Prompt ${escapeHtml(persona.name)} to respond" aria-label="Prompt ${escapeHtml(persona.name)} to respond">
-          <img src="${escapeHtml(persona.avatarUrl || './uploads/default-avatar.svg')}" alt="" onerror="this.onerror=null; this.src='./uploads/default-avatar.svg';">
+      ${members.map(persona => {
+        const offline = isPersonaOffline(persona);
+        const baseStatus = offline ? 'offline' : 'online';
+        const statusLabel = offline ? 'Offline' : 'Online';
+        return `
+        <button type="button" class="character-tray-chip" data-persona-id="${escapeHtml(persona.id)}" title="Prompt ${escapeHtml(persona.name)} to respond (${statusLabel})" aria-label="Prompt ${escapeHtml(persona.name)} to respond. Status: ${statusLabel}" aria-busy="false">
+          <span class="character-tray-avatar">
+            <img src="${escapeHtml(persona.avatarUrl || './uploads/default-avatar.svg')}" alt="" onerror="this.onerror=null; this.src='./uploads/default-avatar.svg';">
+            <span class="character-tray-status ${baseStatus}" data-base-status="${baseStatus}" title="${statusLabel}"></span>
+          </span>
           <span class="character-tray-name">${escapeHtml(persona.name)}</span>
         </button>
-      `).join('')}
+      `;
+      }).join('')}
     `;
     groupCharacterTray.querySelectorAll('.character-tray-chip').forEach(button => {
       button.addEventListener('click', () => promptGroupCharacter(button.dataset.personaId));
@@ -4232,8 +4249,11 @@ ${recMsgsStr}`;
     const group = LocalDB.getGroup(groupId);
     if (!group) return;
     if (generatingGroups[groupId]) return;
-    const names = group.memberIds.map(memberId => LocalDB.getPersona(memberId)?.name).filter(Boolean);
-    currentStatusEl.textContent = names.join(', ') || 'No current members';
+    const memberCount = group.memberIds
+      .map(memberId => LocalDB.getPersona(memberId))
+      .filter(Boolean)
+      .length;
+    currentStatusEl.textContent = `${memberCount} member${memberCount === 1 ? '' : 's'}`;
     currentStatusEl.className = 'status-subtitle';
   }
 
