@@ -6,7 +6,8 @@
   "homepage": ".",
   "scripts": {
     "start": "npx serve .",
-    "dev": "npx serve ."
+    "dev": "npx serve .",
+    "test": "node --test"
   },
   "dependencies": {
     "compression": "^1.8.1",

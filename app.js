@@ -153,6 +153,8 @@ document.addEventListener('DOMContentLoaded', () => {
               }
             ]
           },
+          groups: [],
+          groupMessages: {},
           settings: {}
         };
         await this.setIDB(this.KEY, data);
@@ -161,12 +163,14 @@ document.addEventListener('DOMContentLoaded', () => {
         } catch (e) {}
       }
 
+      GroupChatCore.ensureCollections(data);
       this._cache = data;
       return this._cache;
     },
 
     getRaw() {
       if (this._cache) {
+        GroupChatCore.ensureCollections(this._cache);
         if (!this._cache.migratedMarkdownV3) {
           if (this._cache.messages) {
             for (const personaId in this._cache.messages) {
@@ -184,15 +188,17 @@ document.addEventListener('DOMContentLoaded', () => {
       }
 
       try {
-        const data = JSON.parse(localStorage.getItem(this.KEY)) || { personas: [], messages: {}, settings: {} };
+        const data = JSON.parse(localStorage.getItem(this.KEY)) || { personas: [], messages: {}, groups: [], groupMessages: {}, settings: {} };
+        GroupChatCore.ensureCollections(data);
         this._cache = data;
         return data;
       } catch (e) {
-        return { personas: [], messages: {}, settings: {} };
+        return { personas: [], messages: {}, groups: [], groupMessages: {}, settings: {} };
       }
     },
 
     saveRaw(data) {
+      GroupChatCore.ensureCollections(data);
       this._cache = data;
       // Persist asynchronously to IndexedDB (virtually unlimited quota)
       this.setIDB(this.KEY, data);
@@ -352,7 +358,76 @@ document.addEventListener('DOMContentLoaded', () => {
       const raw = this.getRaw();
       raw.personas = (raw.personas || []).filter(p => p.id !== id);
       delete raw.messages[id];
+      GroupChatCore.removePersonaFromGroups(raw, id);
       this.saveRaw(raw);
+    },
+
+    getGroups() {
+      const raw = this.getRaw();
+      return raw.groups
+        .map(group => GroupChatCore.summarizeGroup(raw, group))
+        .sort((a, b) => (b.lastTimestamp || 0) - (a.lastTimestamp || 0));
+    },
+
+    getGroup(groupId) {
+      const raw = this.getRaw();
+      const group = GroupChatCore.getGroup(raw, groupId);
+      return group ? GroupChatCore.summarizeGroup(raw, group) : null;
+    },
+
+    saveGroup(groupData) {
+      const raw = this.getRaw();
+      const group = GroupChatCore.saveGroup(raw, groupData);
+      this.saveRaw(raw);
+      return group;
+    },
+
+    deleteGroup(groupId) {
+      const raw = this.getRaw();
+      const deleted = GroupChatCore.deleteGroup(raw, groupId);
+      if (deleted) this.saveRaw(raw);
+      return deleted;
+    },
+
+    getGroupMessages(groupId) {
+      return GroupChatCore.getMessages(this.getRaw(), groupId);
+    },
+
+    addGroupMessage(groupId, message) {
+      if (message && message.text) message.text = this.sanitizeText(message.text);
+      const raw = this.getRaw();
+      const saved = GroupChatCore.addMessage(raw, groupId, message);
+      this.saveRaw(raw);
+      return saved;
+    },
+
+    updateGroupMessage(groupId, messageId, updates) {
+      if (updates && updates.text) updates.text = this.sanitizeText(updates.text);
+      const raw = this.getRaw();
+      const message = GroupChatCore.updateMessage(raw, groupId, messageId, updates);
+      if (message) this.saveRaw(raw);
+      return message;
+    },
+
+    deleteGroupMessage(groupId, messageId) {
+      const raw = this.getRaw();
+      const deleted = GroupChatCore.deleteMessage(raw, groupId, messageId);
+      if (deleted) this.saveRaw(raw);
+      return deleted;
+    },
+
+    clearGroup(groupId, clearMemory = false) {
+      const raw = this.getRaw();
+      const cleared = GroupChatCore.clearGroup(raw, groupId, clearMemory);
+      if (cleared) this.saveRaw(raw);
+      return cleared;
+    },
+
+    updateGroupMemory(groupId, memoryText, messageId = null) {
+      const raw = this.getRaw();
+      const group = GroupChatCore.updateMemory(raw, groupId, memoryText, messageId);
+      if (group) this.saveRaw(raw);
+      return group;
     },
 
     getMessages(personaId) {
