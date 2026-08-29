@@ -152,7 +152,9 @@
   function getEffectiveMemory(db, groupId) {
     const messages = getMessages(db, groupId);
     for (let index = messages.length - 1; index >= 0; index -= 1) {
-      if (messages[index].memorySnapshot) return messages[index].memorySnapshot;
+      if (Object.prototype.hasOwnProperty.call(messages[index], 'memorySnapshot')) {
+        return messages[index].memorySnapshot || '';
+      }
     }
     return getGroup(db, groupId)?.groupMemory || '';
   }
@@ -360,14 +362,15 @@ Write only ${persona.name}'s next group-chat message. React to the latest user m
 
     const escapedName = String(personaName || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     if (escapedName) {
-      text = text.replace(new RegExp(`^(?:\\[?${escapedName}\\]?|assistant)\\s*:\\s*`, 'i'), '').trim();
+      text = text.replace(new RegExp(`^(?:[\"'\\[]?${escapedName}[\"'\\]]?|assistant)\\s*:\\s*`, 'i'), '').trim();
     }
 
     const otherNames = memberNames.filter(name => name && name !== personaName);
     if (otherNames.length) {
       const labels = otherNames.map(name => String(name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
-      const foreignSpeaker = new RegExp(`\\n\\s*(?:\\[?(?:${labels})\\]?)\\s*:\\s*`, 'i');
+      const foreignSpeaker = new RegExp(`(?:^|\\n)\\s*(?:[\"'\\[]?(?:${labels})[\"'\\]]?)\\s*:\\s*`, 'i');
       const match = foreignSpeaker.exec(text);
+      if (match?.index === 0) return '';
       if (match) text = text.slice(0, match.index).trim();
     }
     return text.slice(0, 4000).trim();
@@ -432,14 +435,18 @@ ${transcript || 'No messages.'}`
   function parseMemorySections(text) {
     const value = String(text || '');
     const result = {};
-    GROUP_MEMORY_SECTIONS.forEach((header, index) => {
-      const nextHeaders = GROUP_MEMORY_SECTIONS.slice(index + 1)
-        .map(name => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-        .join('|');
-      const end = nextHeaders ? `(?=\\n\\s*\\[(?:${nextHeaders})\\]|$)` : '$';
-      const match = value.match(new RegExp(`\\[${header}\\]\\s*([\\s\\S]*?)${end}`, 'i'));
-      if (match) result[header] = match[1].trim();
-    });
+    const headers = GROUP_MEMORY_SECTIONS
+      .map(header => header.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      .join('|');
+    const sectionPattern = new RegExp(
+      `\\[(${headers})\\]\\s*([\\s\\S]*?)(?=\\n\\s*\\[(?:${headers})\\]|$)`,
+      'gi'
+    );
+    let match;
+    while ((match = sectionPattern.exec(value)) !== null) {
+      const canonicalHeader = GROUP_MEMORY_SECTIONS.find(header => header.toLowerCase() === match[1].toLowerCase());
+      if (canonicalHeader) result[canonicalHeader] = match[2].trim();
+    }
     return result;
   }
 
@@ -482,6 +489,27 @@ ${transcript || 'No messages.'}`
     }).join('\n\n').slice(0, 12000);
   }
 
+  function mergeGroupCollections(localDB, remoteDB) {
+    const groupsById = new Map();
+    (remoteDB?.groups || []).forEach(group => groupsById.set(group.id, group));
+    (localDB?.groups || []).forEach(group => {
+      const remote = groupsById.get(group.id) || {};
+      groupsById.set(group.id, { ...remote, ...group });
+    });
+
+    const groupMessages = { ...(remoteDB?.groupMessages || {}) };
+    for (const groupId of Object.keys(localDB?.groupMessages || {})) {
+      const byId = new Map((groupMessages[groupId] || []).map(message => [message.id, message]));
+      localDB.groupMessages[groupId].forEach(message => {
+        byId.set(message.id, { ...(byId.get(message.id) || {}), ...message });
+      });
+      groupMessages[groupId] = [...byId.values()].sort(
+        (left, right) => new Date(left.timestamp || 0) - new Date(right.timestamp || 0)
+      );
+    }
+    return { groups: [...groupsById.values()], groupMessages };
+  }
+
   return {
     ensureCollections,
     normalizeMemberIds,
@@ -503,6 +531,7 @@ ${transcript || 'No messages.'}`
     buildCharacterPrompt,
     sanitizeCharacterOutput,
     buildGroupMemoryPrompt,
-    sanitizeGroupMemory
+    sanitizeGroupMemory,
+    mergeGroupCollections
   };
 });

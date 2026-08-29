@@ -582,6 +582,25 @@ document.addEventListener('DOMContentLoaded', () => {
     importAnyJson(jsonInput) {
       const data = typeof jsonInput === 'string' ? JSON.parse(jsonInput) : jsonInput;
 
+      // Group export format { group, members, messages }
+      if (data.group?.id && data.group?.name && Array.isArray(data.members) && Array.isArray(data.messages)) {
+        const raw = this.getRaw();
+        raw.personas = raw.personas || [];
+        data.members.forEach(member => {
+          if (!member?.id || !member?.name) return;
+          const index = raw.personas.findIndex(persona => persona.id === member.id);
+          if (index >= 0) raw.personas[index] = { ...raw.personas[index], ...member };
+          else raw.personas.push(member);
+        });
+        GroupChatCore.saveGroup(raw, data.group);
+        raw.groupMessages[data.group.id] = data.messages.map(message => ({
+          ...message,
+          text: this.sanitizeText(message.text)
+        }));
+        this.saveRaw(raw);
+        return { type: 'group', count: 1, groupId: data.group.id, name: data.group.name };
+      }
+
       // Case 1: Full App Backup format { personas: [...], messages: {...} }
       if (data.personas && Array.isArray(data.personas)) {
         this.saveRaw(data);
@@ -1397,6 +1416,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }
       }
 
+      const mergedGroupData = GroupChatCore.mergeGroupCollections(localDB, remoteDB);
+
       // Merge settings (including API keys & model choices)
       const localCustomModels = Array.isArray(localDB.settings?.customModels) ? localDB.settings.customModels : [];
       const remoteCustomModels = Array.isArray(remoteDB.settings?.customModels) ? remoteDB.settings.customModels : [];
@@ -1425,6 +1446,8 @@ document.addEventListener('DOMContentLoaded', () => {
       const mergedDB = {
         personas: Array.from(mergedPersonasMap.values()),
         messages: mergedMessages,
+        groups: mergedGroupData.groups,
+        groupMessages: mergedGroupData.groupMessages,
         settings: mergedSettings
       };
 
@@ -2352,7 +2375,9 @@ ${recMsgsStr}`;
           loadSettingsIntoUI();
           await loadPersonas();
           if (closeImportModal && importModal) hideModal(importModal);
-          if (res.firstPersonaId) {
+          if (res.groupId) {
+            selectGroup(res.groupId, true);
+          } else if (res.firstPersonaId) {
             selectPersona(res.firstPersonaId, true);
           } else if (personas && personas.length > 0) {
             const targetId = activePersonaId && personas.some(p => p.id === activePersonaId) ? activePersonaId : personas[0].id;
@@ -2360,7 +2385,9 @@ ${recMsgsStr}`;
           }
           showAlertDialog({
             title: 'Import Successful',
-            message: res.type === 'backup' ? `Successfully restored backup with ${res.count} persona(s)!` : `Successfully imported ${res.name || 'persona'}!`
+            message: res.type === 'backup'
+              ? `Successfully restored backup with ${res.count} persona(s)!`
+              : `Successfully imported ${res.name || (res.type === 'group' ? 'group' : 'persona')}!`
           });
         } catch (err) {
           showAlertDialog({
@@ -3973,6 +4000,10 @@ ${recMsgsStr}`;
     document.getElementById('header-online-badge')?.classList.remove('hidden');
     btnEditPersona.title = 'Edit Contact Details';
     btnDeletePersonaHeader.title = 'Delete Contact';
+    btnViewMemory.title = 'View Story Memory Log';
+    btnExportChat.title = 'Export Chat JSON';
+    const deleteIcon = btnDeletePersonaHeader.querySelector('i');
+    if (deleteIcon) deleteIcon.className = 'fa-solid fa-user-xmark';
 
     updateHeaderStatus(personaId);
     updateMemorySummarizingUI(personaId);
@@ -4010,6 +4041,10 @@ ${recMsgsStr}`;
     currentNameEl.textContent = group.name;
     btnEditPersona.title = 'Manage Group';
     btnDeletePersonaHeader.title = 'Delete Group';
+    btnViewMemory.title = 'View Group Memory Log';
+    btnExportChat.title = 'Export Group Chat JSON';
+    const deleteIcon = btnDeletePersonaHeader.querySelector('i');
+    if (deleteIcon) deleteIcon.className = 'fa-solid fa-users-slash';
     updateGroupHeaderStatus(groupId);
     updateGenerationControls(`group:${groupId}`);
     renderContactList();
@@ -5077,10 +5112,11 @@ ${recMsgsStr}`;
 
         try {
           const settings = LocalDB.getSettings();
-          const rawText = await streamAiCompletion(promptMessages, {
+          const completionSettings = {
             ...settings,
             maxTokens: Math.min(parseInt(settings.groupMaxTokens, 10) || 450, 700)
-          }, null, false, {
+          };
+          const bridgeContext = {
             threadId: `${window.location.origin}|group:${groupId}:${persona.id}`,
             messageId: userMessageId,
             memory: `${persona.storyMemory || ''}\n\n${currentGroup.groupMemory || ''}`,
@@ -5092,8 +5128,30 @@ ${recMsgsStr}`;
               persona.systemPrompt || ''
             ]),
             mode: 'group-chat'
-          }, controller.signal);
-          const text = GroupChatCore.sanitizeCharacterOutput(rawText, persona.name, promptGroup.memberNames);
+          };
+          let text = '';
+          let attemptPrompt = promptMessages;
+          for (let attempt = 0; attempt < 2 && !text; attempt += 1) {
+            const rawText = await streamAiCompletion(
+              attemptPrompt,
+              completionSettings,
+              null,
+              false,
+              { ...bridgeContext, instructionRevision: `${bridgeContext.instructionRevision}|attempt:${attempt + 1}` },
+              controller.signal
+            );
+            text = GroupChatCore.sanitizeCharacterOutput(rawText, persona.name, promptGroup.memberNames);
+            if (!text && attempt === 0) {
+              logEvent('GROUP_CHAT', `Retrying invalid multi-speaker output from ${persona.name}`);
+              attemptPrompt = [
+                ...promptMessages,
+                {
+                  role: 'system',
+                  content: `Correction: Return only ${persona.name}'s own message. Do not write any other participant's name, label, dialogue, or reaction.`
+                }
+              ];
+            }
+          }
           if (!text) throw new Error(`${persona.name} returned no usable in-character message.`);
 
           const response = {
@@ -5133,8 +5191,8 @@ ${recMsgsStr}`;
     } finally {
       generatingGroups[groupId] = false;
       delete generationControllers[`group:${groupId}`];
-      removeTypingIndicator();
       if (activeGroupId === groupId) {
+        removeTypingIndicator();
         updateGroupHeaderStatus(groupId);
         updateGenerationControls(`group:${groupId}`);
         renderGroupChatFeed(groupId);

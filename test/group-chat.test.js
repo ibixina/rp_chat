@@ -284,3 +284,106 @@ test('group memory sanitation normalizes sections, deduplicates facts, and prese
 test('invalid memory output is rejected instead of erasing established memory', () => {
   assert.equal(GroupChatCore.sanitizeGroupMemory('Everything seems fine.', 'Existing memory'), '');
 });
+
+test('low-capability multi-speaker output is rejected when it starts as another character', () => {
+  assert.equal(
+    GroupChatCore.sanitizeCharacterOutput('Bob: I will answer for Alice.', 'Alice', ['Alice', 'Bob']),
+    ''
+  );
+  assert.equal(
+    GroupChatCore.sanitizeCharacterOutput('\"Alice\": Still me.', 'Alice', ['Alice', 'Bob']),
+    'Still me.'
+  );
+});
+
+test('every direct target remains guaranteed in a large group without selecting everyone', () => {
+  const personas = Array.from({ length: 8 }, (_, index) => ({
+    id: `p${index}`,
+    name: `Character ${index}`,
+    description: `Distinct interest ${index}`
+  }));
+  const group = { id: 'large', name: 'Large Group', memberIds: personas.map(persona => persona.id) };
+
+  personas.forEach((target, index) => {
+    const replyTarget = {
+      id: `target-${index}`,
+      sender: 'persona',
+      personaId: target.id,
+      personaName: target.name,
+      text: 'Earlier message'
+    };
+    const userMessage = {
+      id: `reply-${index}`,
+      sender: 'user',
+      text: 'Can you explain?',
+      replyToId: replyTarget.id
+    };
+    const selected = GroupChatCore.selectResponders({
+      group,
+      personas,
+      messages: [replyTarget, userMessage],
+      userMessage,
+      replyTarget
+    });
+
+    assert.equal(selected[0].personaId, target.id);
+    assert.equal(new Set(selected.map(item => item.personaId)).size, selected.length);
+    assert.ok(selected.length <= 3);
+    assert.ok(selected.length < personas.length);
+  });
+});
+
+test('reordered memory sections are accepted and normalized', () => {
+  const output = `[OPEN PLANS]
+- Meet Friday.
+
+[ESTABLISHED GROUP FACTS]
+- Cara works late.
+
+[KEY GROUP EVENTS]
+- The group chose a venue.
+
+[GROUP DYNAMICS]
+- Bob mediates disagreements.`;
+  const memory = GroupChatCore.sanitizeGroupMemory(output);
+  assert.match(memory, /^\[KEY GROUP EVENTS\]\n- The group chose a venue\./);
+  assert.match(memory, /\[OPEN PLANS\]\n- Meet Friday\./);
+});
+
+test('an explicit empty memory snapshot overrides older snapshots', () => {
+  const db = database();
+  GroupChatCore.saveGroup(db, { id: 'friends', name: 'Friends', memberIds: ['alice', 'bob'] });
+  GroupChatCore.addMessage(db, 'friends', {
+    id: 'm1', sender: 'user', text: 'First', timestamp: new Date().toISOString(), memorySnapshot: 'Old memory'
+  });
+  GroupChatCore.addMessage(db, 'friends', {
+    id: 'm2', sender: 'user', text: 'Second', timestamp: new Date().toISOString(), memorySnapshot: ''
+  });
+  assert.equal(GroupChatCore.getEffectiveMemory(db, 'friends'), '');
+});
+
+test('sync merging preserves groups and deduplicates their messages', () => {
+  const remote = {
+    groups: [{ id: 'friends', name: 'Old Name', memberIds: ['alice', 'bob'], groupMemory: 'Remote' }],
+    groupMessages: {
+      friends: [
+        { id: 'm1', sender: 'user', text: 'Remote copy', timestamp: '2026-01-01T10:00:00.000Z' }
+      ]
+    }
+  };
+  const local = {
+    groups: [{ id: 'friends', name: 'Current Name', memberIds: ['alice', 'bob'], groupMemory: 'Local' }],
+    groupMessages: {
+      friends: [
+        { id: 'm1', sender: 'user', text: 'Edited locally', timestamp: '2026-01-01T10:00:00.000Z' },
+        { id: 'm2', sender: 'persona', personaId: 'alice', text: 'Reply', timestamp: '2026-01-01T10:01:00.000Z' }
+      ]
+    }
+  };
+
+  const merged = GroupChatCore.mergeGroupCollections(local, remote);
+  assert.equal(merged.groups[0].name, 'Current Name');
+  assert.equal(merged.groups[0].groupMemory, 'Local');
+  assert.deepEqual(merged.groupMessages.friends.map(message => message.id), ['m1', 'm2']);
+  assert.equal(merged.groupMessages.friends[0].text, 'Edited locally');
+});

@@ -12,6 +12,7 @@ The app is fully client-side and can be hosted on GitHub Pages. Persona data, ch
 - **Per-persona system prompt** — custom instructions per character, or a built-in roleplay template; supports `${name}`, `${description}`, `${storyMemory}` placeholders
 - **End Instruction** — a per-persona "highest priority" directive that is sent as the **final message of the prompt**, giving it maximum recency weight over everything else
 - **Story Memory Log** — automatic narrative summarization every 12 messages, editable at any time; keeps long-running roleplay physically and emotionally continuous without blowing the context window
+- **Realistic group chats** — create groups from existing characters, manage membership, reply to any message, and get a relevance-selected subset of in-character responses instead of an every-character pile-on
 - **Regenerate with instruction** — retry any AI response, optionally with a custom steering instruction (e.g. "be more sarcastic"); streaming overwrite replaces the old bubble in place
 - **Three provider routes, any model string** — OpenRouter, DeepInfra, or signed-in Gemini/DeepSeek web tabs through the browser extension; the memory engine can inherit the persona route or use a separate API provider
 - **Full generation controls** — temperature, frequency/presence/repetition penalties, context budget, max message history, max output tokens
@@ -47,7 +48,8 @@ The default model is `sao10k/l3.3-euryale-70b` on OpenRouter (uncensored rolepla
 1. Open the app (hosted or local — see below).
 2. Click the profile icon (top-left) to open **AI Provider & Model Settings**.
 3. Pick a provider and model. Enter API credentials for OpenRouter/DeepInfra, or install the one-time browser extension for **Web Chat Bridge**.
-4. Tap **+** in the sidebar to create a persona, open a chat, and send a message.
+4. Use the person-plus button to create personas.
+5. Open a personal chat, or use the group button to select at least two existing characters and create a group chat.
 
 Provider API keys are stored in IndexedDB and sent only to the selected provider. The extension does not copy provider login cookies into Persona Chat.
 
@@ -114,6 +116,7 @@ Create a new contact via **+** (sidebar) or edit an existing one (pen icon in th
 | Story Memory | The current narrative state, injected into the system prompt |
 | First Message | The persona's greeting when the chat starts |
 
+
 ### System prompt placeholders
 
 Custom system prompts accept `name`, `description`, and `storyMemory` placeholders in either `${name}` or `{name}` form; memory prompts additionally accept `recentMessages`:
@@ -138,6 +141,14 @@ The request sent to the provider is assembled as:
 3. `system` — steering instruction, only when regenerating with a custom instruction
 4. `system` — **end instruction**, if set (always final)
 
+## Group chats
+
+Groups reuse existing personas rather than copying them. Each selected responder receives its own character description, personal relationship memory, recent personal-chat continuity, group memory, and recent group transcript. Private-chat context shapes familiarity and personality but is explicitly marked as internal; group memory contains only events visible in that group.
+
+Responder selection happens in application logic before generation. Directly replying to a character guarantees that character is selected. Otherwise, name mentions, topic overlap, recent participation, and a speaker cooldown choose a maximum of three relevant characters. Each response is generated independently and sequentially, so later responders can naturally react to earlier ones without asking one model to simulate the whole group.
+
+Hover or tap a group message's reply action to quote it. Groups can be renamed, have members added or removed, exported, cleared with their group memory, or permanently deleted.
+
 ## Memory system
 
 Long roleplay outgrows any context window, so the app maintains a compact **story memory** per persona — a Markdown narrative log (scene, relationship state, unresolved hooks, established facts) that is injected into every prompt.
@@ -146,6 +157,8 @@ Long roleplay outgrows any context window, so the app maintains a compact **stor
 - The summarizer outputs **delta updates only** (`[SCENE UPDATE]`, `[EMOTIONAL/RELATIONSHIP UPDATE]`, `[NEW FACTS & MILESTONES]`, `[RESOLVED/REMOVED FACTS]`), which are merged into the existing memory — older facts are pruned instead of duplicated.
 - Summarization runs on a **separate model route** (default: free `nvidia/nemotron-3-ultra-550b-a55b:free`, or "Same as Chat"), so an expensive chat model doesn't burn tokens on bookkeeping.
 - Open the brain icon in the chat header to view/edit memory or hit **Summarize Now** to force a pass within the memory budget (default 5000 tokens).
+
+Group chats maintain a separate four-section memory for key events, group dynamics, open plans, and established group facts. It is built only from the group transcript and never updates a persona's personal-chat memory.
 
 ## Regenerating responses
 
@@ -172,8 +185,9 @@ Details worth knowing:
 
 ## Data & privacy
 
-- All local data lives in **IndexedDB** (`PersonaChatDB`) with a LocalStorage fallback; nothing is uploaded in plaintext, and nothing is sent to any server except your chosen AI provider.
+- All local data, including groups and group memories, lives in **IndexedDB** (`PersonaChatDB`) with a LocalStorage fallback; nothing is uploaded in plaintext, and nothing is sent to any server except your chosen AI provider.
 - API keys are stored locally in your browser and sent only to the provider you configured.
+- Personal-chat memory is supplied privately to each character generation for continuity; group-memory summarization receives only the group transcript and existing group memory.
 - Sync payloads are end-to-end encrypted before upload; treat your sync link/key as a secret — it grants access to your encrypted vault.
 - Use **Import & Data Management** (file-import icon) for full backup download and restore, or **Reset Browser Storage** to wipe everything and return to the sample contact.
 
@@ -182,7 +196,8 @@ Details worth knowing:
 ```
 index.html          app shell + all modals
 style.css           themes and UI styling
-app.js              entire client: storage, prompt builder, streaming, sync, UI
+app.js              client storage adapter, streaming, sync, personal chat, and UI
+group-chat.js       group persistence rules, speaker selection, prompting, and memory
 manifest.json       PWA manifest
 extension/          Manifest V3 bridge for signed-in Gemini/DeepSeek tabs
 uploads/            avatar images (default-avatar.svg is committed)
@@ -191,6 +206,7 @@ server.js           optional Express backend (self-hosting only)
 db.js               server-side JSON persistence (data/db.json)
 import-perchance.js Node script to convert Perchance character exports into app JSON
 .github/workflows/deploy.yml   GitHub Pages deployment
+test/               Node test suite for group behavior and persistence
 ```
 
 ## Tech stack
