@@ -1783,8 +1783,13 @@ html, body {
 
 .group-avatar-tile img {
   display: block;
+  box-sizing: border-box;
+  padding: 0;
+  border: 0;
   border-radius: 0;
+  background: transparent;
   object-fit: cover;
+  transition: none;
 }
 
 .group-avatar-initial {

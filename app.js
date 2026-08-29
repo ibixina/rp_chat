@@ -4034,9 +4034,9 @@ ${recMsgsStr}`;
         <i class="fa-solid fa-comment-dots"></i><span>Prompt</span>
       </span>
       ${members.map(persona => {
-        const offline = isPersonaOffline(persona);
-        const baseStatus = offline ? 'offline' : 'online';
-        const statusLabel = offline ? 'Offline' : 'Online';
+        // Group members are available participants; only active generation changes the tray status.
+        const baseStatus = 'online';
+        const statusLabel = 'Online';
         return `
         <button type="button" class="character-tray-chip" data-persona-id="${escapeHtml(persona.id)}" title="Prompt ${escapeHtml(persona.name)} to respond (${statusLabel})" aria-label="Prompt ${escapeHtml(persona.name)} to respond. Status: ${statusLabel}" aria-busy="false">
           <span class="character-tray-avatar">
