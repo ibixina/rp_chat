@@ -2100,6 +2100,7 @@ ${recMsgsStr}`;
   let activeGroupId = null;
   const generatingPersonas = {};
   const generatingGroups = {};
+  let pendingGroupReply = null;
   const activeStreamingState = {};
   const memorySummarizingState = {};
   const generationControllers = {};
@@ -2156,6 +2157,7 @@ ${recMsgsStr}`;
   const activeChatViewEl = document.getElementById('active-chat-view');
   
   const currentAvatarEl = document.getElementById('current-avatar');
+  const currentGroupAvatarEl = document.getElementById('current-group-avatar');
   const currentNameEl = document.getElementById('current-name');
   const currentStatusEl = document.getElementById('current-status');
   
@@ -2163,6 +2165,10 @@ ${recMsgsStr}`;
   const messageInput = document.getElementById('message-input');
   const btnSend = document.getElementById('btn-send');
   const btnStopGeneration = document.getElementById('btn-stop-generation');
+  const replyComposer = document.getElementById('reply-composer');
+  const replyComposerSender = document.getElementById('reply-composer-sender');
+  const replyComposerText = document.getElementById('reply-composer-text');
+  const btnCancelReply = document.getElementById('btn-cancel-reply');
   
   const appContainerEl = document.querySelector('.app-container');
   const btnToggleSidebar = document.getElementById('btn-toggle-sidebar');
@@ -2170,6 +2176,7 @@ ${recMsgsStr}`;
   const btnExpandSidebarEmpty = document.getElementById('btn-expand-sidebar-empty');
 
   const btnAddPersona = document.getElementById('btn-add-persona');
+  const btnAddGroup = document.getElementById('btn-add-group');
   const btnEditPersona = document.getElementById('btn-edit-persona');
   const btnDeletePersonaHeader = document.getElementById('btn-delete-persona-header');
   const btnViewMemory = document.getElementById('btn-view-memory');
@@ -2216,11 +2223,30 @@ ${recMsgsStr}`;
     const safeName = (p ? p.name : 'chat').toLowerCase().replace(/[^a-z0-9]/g, '_');
     const jsonStr = JSON.stringify(data, null, 2);
     const blob = new Blob([jsonStr], { type: 'application/json' });
+
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
     a.download = `${safeName}_chat_export_${Date.now()}.json`;
     a.click();
+    URL.revokeObjectURL(url);
+  }
+  function exportGroupChatJson(groupId) {
+    const group = LocalDB.getGroup(groupId);
+    if (!group) return;
+    const data = {
+      group,
+      members: group.memberIds.map(personaId => LocalDB.getPersona(personaId)).filter(Boolean),
+      messages: LocalDB.getGroupMessages(groupId),
+      exportedAt: new Date().toISOString()
+    };
+    const safeName = group.name.toLowerCase().replace(/[^a-z0-9]/g, '_') || 'group';
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = `${safeName}_group_export_${Date.now()}.json`;
+    anchor.click();
     URL.revokeObjectURL(url);
   }
 
@@ -2276,6 +2302,14 @@ ${recMsgsStr}`;
   const btnExportPersonaModal = document.getElementById('btn-export-persona-modal');
   const formAvatarFile = document.getElementById('form-avatar-file');
   const formAvatarPreview = document.getElementById('form-avatar-preview');
+
+  const groupModal = document.getElementById('group-modal');
+  const groupForm = document.getElementById('group-form');
+  const groupModalTitle = document.getElementById('group-modal-title');
+  const groupMemberList = document.getElementById('group-member-list');
+  const btnCloseGroupModal = document.getElementById('btn-close-group-modal');
+  const btnCancelGroupModal = document.getElementById('btn-cancel-group-modal');
+  const btnDeleteGroup = document.getElementById('btn-delete-group');
 
   const memoryModal = document.getElementById('memory-modal');
   const memoryTextarea = document.getElementById('memory-textarea');
@@ -2983,9 +3017,15 @@ ${recMsgsStr}`;
   // -------------------------------------------------------------
   async function loadPersonas() {
     personas = LocalDB.getPersonas();
-    renderContactList(personas);
-    if (!activePersonaId && personas.length > 0) {
-      selectPersona(personas[0].id);
+    const groups = LocalDB.getGroups();
+    renderContactList(personas, groups);
+    if (!activePersonaId && !activeGroupId) {
+      const latest = [
+        ...personas.map(persona => ({ type: 'persona', id: persona.id, timestamp: persona.lastTimestamp || 0 })),
+        ...groups.map(group => ({ type: 'group', id: group.id, timestamp: group.lastTimestamp || 0 }))
+      ].sort((left, right) => right.timestamp - left.timestamp)[0];
+      if (latest?.type === 'group') selectGroup(latest.id);
+      else if (latest) selectPersona(latest.id);
     }
   }
 
@@ -3800,9 +3840,10 @@ ${recMsgsStr}`;
     return (Date.now() - lastTs) > OFFLINE_THRESHOLD_MS;
   }
 
-  function updateGenerationControls(personaId = activePersonaId) {
-    if (personaId !== activePersonaId) return;
-    const isGenerating = !!(personaId && generatingPersonas[personaId]);
+  function updateGenerationControls() {
+    const isGenerating = activeGroupId
+      ? !!generatingGroups[activeGroupId]
+      : !!(activePersonaId && generatingPersonas[activePersonaId]);
     btnSend.classList.toggle('hidden', isGenerating);
     btnStopGeneration.classList.toggle('hidden', !isGenerating);
     if (!isGenerating) btnStopGeneration.disabled = false;
@@ -3843,51 +3884,70 @@ ${recMsgsStr}`;
     }
   }
 
-  function renderContactList(list) {
+  function renderContactList(personaList = LocalDB.getPersonas(), groupList = LocalDB.getGroups()) {
     contactListEl.innerHTML = '';
+    const entries = [
+      ...(groupList || []).map(group => ({ type: 'group', data: group })),
+      ...(personaList || []).map(persona => ({ type: 'persona', data: persona }))
+    ].sort((left, right) => (right.data.lastTimestamp || 0) - (left.data.lastTimestamp || 0));
 
-    if (list.length === 0) {
-      contactListEl.innerHTML = `<div style="padding: 20px; text-align: center; color: var(--text-muted); font-size: 13px;">No contacts found.</div>`;
+    if (!entries.length) {
+      contactListEl.innerHTML = `<div style="padding: 20px; text-align: center; color: var(--text-muted); font-size: 13px;">No chats found.</div>`;
       return;
     }
 
-    list.forEach(p => {
-      const isSelected = p.id === activePersonaId;
-      const isTyping = !!generatingPersonas[p.id];
-      const offline = isPersonaOffline(p);
-
+    entries.forEach(({ type, data }) => {
+      const isGroup = type === 'group';
+      const isSelected = isGroup ? data.id === activeGroupId : data.id === activePersonaId;
+      const isTyping = isGroup ? !!generatingGroups[data.id] : !!generatingPersonas[data.id];
+      const offline = !isGroup && isPersonaOffline(data);
       const item = document.createElement('div');
       item.className = `contact-item ${isSelected ? 'active' : ''}`;
-      item.dataset.id = p.id;
-      item.title = p.name;
+      item.dataset.id = data.id;
+      item.dataset.type = type;
+      item.title = data.name;
 
+      const avatarHtml = isGroup
+        ? `<span class="group-avatar contact-group-avatar"><i class="fa-solid fa-user-group"></i></span>`
+        : `<div class="avatar-wrapper ${offline ? 'offline' : ''}">
+            <img src="${data.avatarUrl || './uploads/default-avatar.svg'}" alt="${escapeHtml(data.name)}" class="contact-avatar" onerror="this.onerror=null; this.src='./uploads/default-avatar.svg';">
+            <span class="online-badge ${offline ? 'offline' : ''}" title="${offline ? 'Offline' : 'Online'}"></span>
+          </div>`;
+      const groupMembers = isGroup
+        ? data.memberIds.map(memberId => LocalDB.getPersona(memberId)?.name).filter(Boolean).join(', ')
+        : '';
       item.innerHTML = `
-        <div class="avatar-wrapper ${offline ? 'offline' : ''}">
-          <img src="${p.avatarUrl || './uploads/default-avatar.svg'}" alt="${escapeHtml(p.name)}" class="contact-avatar" onerror="this.onerror=null; this.src='./uploads/default-avatar.svg';">
-          <span class="online-badge ${offline ? 'offline' : ''}" title="${offline ? 'Offline' : 'Online'}"></span>
-        </div>
+        ${avatarHtml}
         <div class="contact-details">
           <div class="contact-top-row">
-            <span class="contact-name">${escapeHtml(p.name)}</span>
-            <span class="contact-time">${p.lastMessageTime || ''}</span>
+            <span class="contact-name">${isGroup ? '<i class="fa-solid fa-user-group contact-type-icon"></i>' : ''}${escapeHtml(data.name)}</span>
+            <span class="contact-time">${data.lastMessageTime || ''}</span>
           </div>
           <div class="contact-snippet ${isTyping ? 'typing' : ''}">
-            ${isTyping ? '<span style="color: #53bdeb; font-style: italic;">typing...</span>' : escapeHtml(p.lastMessageText || p.description)}
+            ${isTyping
+              ? '<span style="color: #53bdeb; font-style: italic;">typing...</span>'
+              : escapeHtml(data.lastMessageText || groupMembers || data.description)}
           </div>
         </div>
       `;
 
-      item.addEventListener('click', () => selectPersona(p.id));
+      item.addEventListener('click', () => isGroup ? selectGroup(data.id) : selectPersona(data.id));
       contactListEl.appendChild(item);
     });
   }
 
-  // Search Filter
   if (searchInput) {
-    searchInput.addEventListener('input', (e) => {
-      const q = e.target.value.toLowerCase().trim();
-      const filtered = personas.filter(p => p.name.toLowerCase().includes(q) || (p.description && p.description.toLowerCase().includes(q)));
-      renderContactList(filtered);
+    searchInput.addEventListener('input', (event) => {
+      const query = event.target.value.toLowerCase().trim();
+      const filteredPersonas = personas.filter(persona =>
+        persona.name.toLowerCase().includes(query)
+        || (persona.description && persona.description.toLowerCase().includes(query))
+      );
+      const filteredGroups = LocalDB.getGroups().filter(group => {
+        const memberNames = group.memberIds.map(memberId => LocalDB.getPersona(memberId)?.name || '').join(' ');
+        return group.name.toLowerCase().includes(query) || memberNames.toLowerCase().includes(query);
+      });
+      renderContactList(filteredPersonas, filteredGroups);
     });
   }
 
@@ -3895,34 +3955,67 @@ ${recMsgsStr}`;
   // Persona Selection & Active View
   // -------------------------------------------------------------
   function selectPersona(personaId, forceReRender = false) {
-    const isSamePersona = activePersonaId === personaId;
+    const isSamePersona = activePersonaId === personaId && !activeGroupId;
     activePersonaId = personaId;
+    activeGroupId = null;
+    clearPendingGroupReply();
     const persona = LocalDB.getPersona(personaId);
-
     if (!persona) return;
 
-    if (appContainerEl) {
-      appContainerEl.classList.add('chat-open');
-    }
-
+    appContainerEl?.classList.add('chat-open');
     emptyStateEl.classList.add('hidden');
     activeChatViewEl.classList.remove('hidden');
-
+    currentAvatarEl.classList.remove('hidden');
+    currentGroupAvatarEl?.classList.add('hidden');
     currentAvatarEl.src = persona.avatarUrl || './uploads/default-avatar.svg';
     currentAvatarEl.onerror = () => { currentAvatarEl.src = './uploads/default-avatar.svg'; };
     currentNameEl.textContent = persona.name;
+    document.getElementById('header-online-badge')?.classList.remove('hidden');
+    btnEditPersona.title = 'Edit Contact Details';
+    btnDeletePersonaHeader.title = 'Delete Contact';
 
     updateHeaderStatus(personaId);
     updateMemorySummarizingUI(personaId);
     updateGenerationControls(personaId);
+    renderContactList();
 
-    renderContactList(LocalDB.getPersonas());
+    if (!isSamePersona || forceReRender) renderChatFeed(personaId);
+    else scrollToBottomIfNearBottom();
+  }
 
-    if (!isSamePersona || forceReRender) {
-      renderChatFeed(personaId);
-    } else {
-      scrollToBottomIfNearBottom();
-    }
+  function updateGroupHeaderStatus(groupId) {
+    if (!groupId || groupId !== activeGroupId) return;
+    const group = LocalDB.getGroup(groupId);
+    if (!group) return;
+    if (generatingGroups[groupId]) return;
+    const names = group.memberIds.map(memberId => LocalDB.getPersona(memberId)?.name).filter(Boolean);
+    currentStatusEl.textContent = names.join(', ') || 'No current members';
+    currentStatusEl.className = 'status-subtitle';
+  }
+
+  function selectGroup(groupId, forceReRender = false) {
+    const isSameGroup = activeGroupId === groupId && !activePersonaId;
+    const group = LocalDB.getGroup(groupId);
+    if (!group) return;
+    activeGroupId = groupId;
+    activePersonaId = null;
+    clearPendingGroupReply();
+
+    appContainerEl?.classList.add('chat-open');
+    emptyStateEl.classList.add('hidden');
+    activeChatViewEl.classList.remove('hidden');
+    currentAvatarEl.classList.add('hidden');
+    currentGroupAvatarEl?.classList.remove('hidden');
+    document.getElementById('header-online-badge')?.classList.add('hidden');
+    currentNameEl.textContent = group.name;
+    btnEditPersona.title = 'Manage Group';
+    btnDeletePersonaHeader.title = 'Delete Group';
+    updateGroupHeaderStatus(groupId);
+    updateGenerationControls(`group:${groupId}`);
+    renderContactList();
+
+    if (!isSameGroup || forceReRender) renderGroupChatFeed(groupId);
+    else scrollToBottomIfNearBottom();
   }
 
   const MESSAGE_BATCH_SIZE = 30;
@@ -3937,8 +4030,19 @@ ${recMsgsStr}`;
     scrollToBottom();
   }
 
+  function renderGroupChatFeed(groupId) {
+    if (groupId !== activeGroupId) return;
+    activeMessagesList = LocalDB.getGroupMessages(groupId) || [];
+    displayedMessageCount = Math.min(MESSAGE_BATCH_SIZE, activeMessagesList.length);
+    userScrolledUp = false;
+    renderCurrentMessageBatch();
+    scrollToBottom();
+  }
+
   function renderCurrentMessageBatch(keepScrollPosition = false) {
-    if (activePersonaId) {
+    if (activeGroupId) {
+      activeMessagesList = LocalDB.getGroupMessages(activeGroupId) || [];
+    } else if (activePersonaId) {
       activeMessagesList = LocalDB.getMessages(activePersonaId) || [];
     }
 
@@ -3968,20 +4072,22 @@ ${recMsgsStr}`;
       appendMessageBubble(msg);
     });
 
-    const streamState = activeStreamingState[activePersonaId];
-    if (streamState && streamState.fullText) {
-      const ghostMsgObj = {
-        id: streamState.assistantMsgId,
-        sender: 'persona',
-        text: streamState.fullText,
-        timestamp: new Date().toISOString()
-      };
-      const ghostBubble = appendMessageBubble(ghostMsgObj);
-      ghostBubble.classList.add('streaming-ghost');
-      streamState.bubbleEl = ghostBubble;
+    if (activePersonaId) {
+      const streamState = activeStreamingState[activePersonaId];
+      if (streamState && streamState.fullText) {
+        const ghostMsgObj = {
+          id: streamState.assistantMsgId,
+          sender: 'persona',
+          text: streamState.fullText,
+          timestamp: new Date().toISOString()
+        };
+        const ghostBubble = appendMessageBubble(ghostMsgObj);
+        ghostBubble.classList.add('streaming-ghost');
+        streamState.bubbleEl = ghostBubble;
+      }
     }
 
-    if (generatingPersonas[activePersonaId]) {
+    if ((activePersonaId && generatingPersonas[activePersonaId]) || (activeGroupId && generatingGroups[activeGroupId])) {
       showTypingIndicator();
     }
 
@@ -4000,7 +4106,9 @@ ${recMsgsStr}`;
   }
 
   function loadOlderMessages() {
-    if (activePersonaId) {
+    if (activeGroupId) {
+      activeMessagesList = LocalDB.getGroupMessages(activeGroupId) || [];
+    } else if (activePersonaId) {
       activeMessagesList = LocalDB.getMessages(activePersonaId) || [];
     }
     if (displayedMessageCount >= activeMessagesList.length) return;
@@ -4014,7 +4122,9 @@ ${recMsgsStr}`;
 
   if (chatFeedEl) {
     chatFeedEl.addEventListener('scroll', () => {
-      if (activePersonaId) {
+      if (activeGroupId) {
+        activeMessagesList = LocalDB.getGroupMessages(activeGroupId) || [];
+      } else if (activePersonaId) {
         activeMessagesList = LocalDB.getMessages(activePersonaId) || [];
       }
       if (chatFeedEl.scrollTop <= 60 && displayedMessageCount < activeMessagesList.length) {
@@ -4189,8 +4299,29 @@ ${recMsgsStr}`;
   }
 
   function appendMessageBubble(msg) {
+    const inGroup = !!activeGroupId;
     const isPersona = msg.sender === 'persona';
-    const persona = isPersona ? LocalDB.getPersona(activePersonaId) : null;
+    const persona = isPersona ? LocalDB.getPersona(inGroup ? msg.personaId : activePersonaId) : null;
+    const groupMessages = inGroup ? LocalDB.getGroupMessages(activeGroupId) : [];
+    const replyTarget = inGroup && msg.replyToId
+      ? groupMessages.find(message => message.id === msg.replyToId) || msg.replyToSnapshot || null
+      : null;
+    const senderName = isPersona ? (persona?.name || msg.personaName || 'Former member') : 'You';
+    const senderHue = Math.floor(GroupChatCore.stableUnit(msg.personaId || senderName) * 360);
+    const senderHtml = inGroup && isPersona
+      ? `<div class="group-message-sender" style="color: hsl(${senderHue} 72% 70%)">${escapeHtml(senderName)}</div>`
+      : '';
+    const replySender = replyTarget
+      ? (replyTarget.sender === 'persona'
+        ? (LocalDB.getPersona(replyTarget.personaId)?.name || replyTarget.personaName || 'Former member')
+        : 'You')
+      : '';
+    const replyHtml = replyTarget
+      ? `<div class="message-reply-quote" data-reply-target="${escapeHtml(replyTarget.id)}">
+          <strong>${escapeHtml(replySender)}</strong>
+          <span>${escapeHtml(replyTarget.text)}</span>
+        </div>`
+      : '';
 
     const bubble = document.createElement('div');
     bubble.className = `message-bubble ${isPersona ? 'persona' : 'user'} ${msg.reactions?.length ? 'has-reactions' : ''}`;
@@ -4209,7 +4340,7 @@ ${recMsgsStr}`;
     }
 
     let errorRetryHtml = '';
-    if (msg.isError || (msg.id && msg.id.startsWith('err-'))) {
+    if (!inGroup && (msg.isError || (msg.id && msg.id.startsWith('err-')))) {
       errorRetryHtml = `
         <div style="margin-top: 10px;">
           <button class="btn-retry-error-msg" style="background: rgba(239, 68, 68, 0.25); border: 1px solid rgba(239, 68, 68, 0.5); color: #f87171; padding: 5px 14px; border-radius: 6px; font-size: 12px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; font-weight: 600;">
@@ -4221,6 +4352,8 @@ ${recMsgsStr}`;
 
     bubble.innerHTML = `
       <div class="bubble-content">
+        ${senderHtml}
+        ${replyHtml}
         <div class="message-text" data-raw-text="${escapeHtml(msg.text)}" title="Double-click to edit text">${formatMessageText(msg.text)}</div>
         ${errorRetryHtml}
       </div>
@@ -4237,7 +4370,11 @@ ${recMsgsStr}`;
         <button class="emoji-btn" data-emoji="😂">😂</button>
         <button class="emoji-btn" data-emoji="🥺">🥺</button>
         <div class="toolbar-divider"></div>
-        ${isPersona ? `
+        ${inGroup ? `
+          <button class="action-btn reply-btn" title="Reply to this message">
+            <i class="fa-solid fa-reply"></i>
+          </button>
+        ` : isPersona ? `
           <button class="action-btn continue-btn" title="Continue persona generation">
             <i class="fa-solid fa-play"></i>
           </button>
@@ -4270,6 +4407,26 @@ ${recMsgsStr}`;
         } else {
           openRetryModal(activePersonaId, true, existingInstruction);
         }
+      });
+    }
+
+    const replyBtn = bubble.querySelector('.reply-btn');
+    if (replyBtn) {
+      replyBtn.addEventListener('click', (event) => {
+        event.stopPropagation();
+        setPendingGroupReply(msg);
+      });
+    }
+
+    const replyQuote = bubble.querySelector('.message-reply-quote');
+    if (replyQuote) {
+      replyQuote.addEventListener('click', (event) => {
+        event.stopPropagation();
+        const target = document.getElementById(replyQuote.dataset.replyTarget);
+        if (!target) return;
+        target.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        target.classList.remove('reply-highlight');
+        requestAnimationFrame(() => target.classList.add('reply-highlight'));
       });
     }
 
@@ -4422,7 +4579,8 @@ ${recMsgsStr}`;
         msg.text = newText;
         textEl.dataset.rawText = newText;
         textEl.innerHTML = formatMessageText(newText);
-        LocalDB.updateMessage(activePersonaId, msg.id, { text: newText });
+        if (activeGroupId) LocalDB.updateGroupMessage(activeGroupId, msg.id, { text: newText });
+        else LocalDB.updateMessage(activePersonaId, msg.id, { text: newText });
       } else {
         textEl.dataset.rawText = originalText;
         textEl.innerHTML = formatMessageText(originalText);
@@ -4471,7 +4629,8 @@ ${recMsgsStr}`;
       msg.reactions.push(emoji);
     }
 
-    LocalDB.updateMessage(activePersonaId, msg.id, { reactions: msg.reactions });
+    if (activeGroupId) LocalDB.updateGroupMessage(activeGroupId, msg.id, { reactions: msg.reactions });
+    else LocalDB.updateMessage(activePersonaId, msg.id, { reactions: msg.reactions });
 
     const existingReactionsEl = bubble.querySelector('.message-reactions');
     if (existingReactionsEl) existingReactionsEl.remove();
@@ -4493,12 +4652,15 @@ ${recMsgsStr}`;
       danger: true,
       onConfirm: () => {
         bubble.remove();
-        LocalDB.deleteMessage(activePersonaId, msgId);
-        if (activePersonaId) {
+        if (activeGroupId) {
+          LocalDB.deleteGroupMessage(activeGroupId, msgId);
+          activeMessagesList = LocalDB.getGroupMessages(activeGroupId) || [];
+        } else {
+          LocalDB.deleteMessage(activePersonaId, msgId);
           activeMessagesList = LocalDB.getMessages(activePersonaId) || [];
-          displayedMessageCount = Math.min(displayedMessageCount, activeMessagesList.length);
         }
-        renderContactList(LocalDB.getPersonas());
+        displayedMessageCount = Math.min(displayedMessageCount, activeMessagesList.length);
+        renderContactList();
       }
     });
   }
@@ -4524,10 +4686,59 @@ ${recMsgsStr}`;
   // -------------------------------------------------------------
   // AI Streaming Generators: Send, Retry, Continue
   // -------------------------------------------------------------
+  function setPendingGroupReply(message) {
+    if (!activeGroupId || !message) return;
+    const sender = message.sender === 'persona'
+      ? (LocalDB.getPersona(message.personaId)?.name || message.personaName || 'Former member')
+      : 'yourself';
+    pendingGroupReply = {
+      id: message.id,
+      sender: message.sender,
+      personaId: message.personaId || null,
+      personaName: message.personaName || LocalDB.getPersona(message.personaId)?.name || null,
+      text: message.text
+    };
+    replyComposerSender.textContent = `Replying to ${sender}`;
+    replyComposerText.textContent = message.text;
+    replyComposer.classList.remove('hidden');
+    messageInput.focus();
+  }
+
+  function clearPendingGroupReply() {
+    pendingGroupReply = null;
+    replyComposer?.classList.add('hidden');
+    if (replyComposerSender) replyComposerSender.textContent = 'Replying to';
+    if (replyComposerText) replyComposerText.textContent = '';
+  }
+
+  async function sendGroupMessage() {
+    const groupId = activeGroupId;
+    const text = messageInput.value.trim();
+    if (!groupId || generatingGroups[groupId] || !text) return;
+    const userMessage = {
+      id: `gmsg-${crypto.randomUUID()}`,
+      sender: 'user',
+      text,
+      timestamp: new Date().toISOString(),
+      ...(pendingGroupReply ? {
+        replyToId: pendingGroupReply.id,
+        replyToSnapshot: { ...pendingGroupReply }
+      } : {})
+    };
+
+    LocalDB.addGroupMessage(groupId, userMessage);
+    messageInput.value = '';
+    messageInput.style.height = 'auto';
+    clearPendingGroupReply();
+    renderGroupChatFeed(groupId);
+    renderContactList();
+    await generateGroupResponses(groupId, userMessage.id);
+  }
+
   async function sendMessage() {
+    if (activeGroupId) return sendGroupMessage();
     const text = messageInput.value.trim();
     if (!activePersonaId || generatingPersonas[activePersonaId]) return;
-
     if (!text) {
       const msgs = LocalDB.getMessages(activePersonaId);
       if (msgs && msgs.length > 0) {
@@ -4801,7 +5012,7 @@ ${recMsgsStr}`;
     LocalDB.updateGroupMessage(groupId, userMessageId, { isRead: true });
 
     const replyTarget = userMessage.replyToId
-      ? LocalDB.getGroupMessages(groupId).find(message => message.id === userMessage.replyToId) || null
+      ? LocalDB.getGroupMessages(groupId).find(message => message.id === userMessage.replyToId) || userMessage.replyToSnapshot || null
       : null;
     const groupPersonas = group.memberIds.map(personaId => LocalDB.getPersona(personaId)).filter(Boolean);
     const personalMessages = Object.fromEntries(
@@ -4886,13 +5097,23 @@ ${recMsgsStr}`;
           if (!text) throw new Error(`${persona.name} returned no usable in-character message.`);
 
           const response = {
-            id: `gmsg-${Date.now()}-${persona.id}`,
+            id: `gmsg-${crypto.randomUUID()}`,
             sender: 'persona',
             personaId: persona.id,
+            personaName: persona.name,
             text,
             timestamp: new Date().toISOString(),
             respondingToId: userMessageId,
-            ...(selection.reason === 'direct-reply' ? { replyToId: userMessageId } : {})
+            ...(selection.reason === 'direct-reply' ? {
+              replyToId: userMessageId,
+              replyToSnapshot: {
+                id: userMessage.id,
+                sender: 'user',
+                personaId: null,
+                personaName: null,
+                text: userMessage.text
+              }
+            } : {})
           };
           LocalDB.addGroupMessage(groupId, response);
           responses.push(response);
@@ -5113,10 +5334,9 @@ ${recMsgsStr}`;
 
   // Periodic Status Refresh (Updates online/offline indicator dynamically every 30s)
   setInterval(() => {
-    renderContactList(LocalDB.getPersonas());
-    if (activePersonaId) {
-      updateHeaderStatus(activePersonaId);
-    }
+    renderContactList();
+    if (activePersonaId) updateHeaderStatus(activePersonaId);
+    else if (activeGroupId) updateGroupHeaderStatus(activeGroupId);
   }, 30000);
 
   // -------------------------------------------------------------
@@ -5124,11 +5344,13 @@ ${recMsgsStr}`;
   // -------------------------------------------------------------
   btnSend.addEventListener('click', sendMessage);
   btnStopGeneration.addEventListener('click', () => {
-    const controller = generationControllers[activePersonaId];
+    const controllerKey = activeGroupId ? `group:${activeGroupId}` : activePersonaId;
+    const controller = generationControllers[controllerKey];
     if (!controller) return;
     btnStopGeneration.disabled = true;
     controller.abort();
   });
+  if (btnCancelReply) btnCancelReply.addEventListener('click', clearPendingGroupReply);
 
   messageInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
@@ -5157,6 +5379,7 @@ ${recMsgsStr}`;
   // Mobile & Fullscreen Mode Soft-Keyboard Visual Viewport Handler
   if (window.visualViewport) {
     const handleVisualViewportChange = () => {
+
       const activeChatView = document.getElementById('active-chat-view');
       const appContainer = document.querySelector('.app-container');
       const isFullscreen = !!(document.fullscreenElement || document.webkitFullscreenElement);
@@ -5216,21 +5439,35 @@ ${recMsgsStr}`;
   });
 
   // Header Actions
-  if (btnExportChat) btnExportChat.addEventListener('click', () => exportChatJson(activePersonaId));
+  if (btnExportChat) {
+    btnExportChat.addEventListener('click', () => {
+      if (activeGroupId) exportGroupChatJson(activeGroupId);
+      else exportChatJson(activePersonaId);
+    });
+  }
 
   if (btnClearChat) {
     btnClearChat.addEventListener('click', () => {
-      if (!activePersonaId) return;
-      const persona = LocalDB.getPersona(activePersonaId);
+      const group = activeGroupId ? LocalDB.getGroup(activeGroupId) : null;
+      const persona = activePersonaId ? LocalDB.getPersona(activePersonaId) : null;
+      if (!group && !persona) return;
       showConfirmDialog({
         title: 'Clear Chat History',
-        message: `Are you sure you want to clear all message history for ${persona?.name || 'this contact'}?`,
-        confirmText: 'Clear History',
+        message: group
+          ? `Clear all messages and group memory for ${group.name}?`
+          : `Clear all message history for ${persona?.name || 'this contact'}?`,
+        confirmText: group ? 'Clear History & Memory' : 'Clear History',
         danger: true,
         onConfirm: () => {
-          LocalDB.clearChat(activePersonaId);
-          renderChatFeed(activePersonaId);
-          renderContactList(LocalDB.getPersonas());
+          if (group) {
+            LocalDB.clearGroup(group.id, true);
+            clearPendingGroupReply();
+            renderGroupChatFeed(group.id);
+          } else {
+            LocalDB.clearChat(persona.id);
+            renderChatFeed(persona.id);
+          }
+          renderContactList();
         }
       });
     });
@@ -5238,6 +5475,10 @@ ${recMsgsStr}`;
 
   if (btnDeletePersonaHeader) {
     btnDeletePersonaHeader.addEventListener('click', () => {
+      if (activeGroupId) {
+        confirmDeleteGroup(activeGroupId);
+        return;
+      }
       if (!activePersonaId) return;
       const persona = LocalDB.getPersona(activePersonaId);
       showConfirmDialog({
@@ -5258,35 +5499,41 @@ ${recMsgsStr}`;
 
   if (btnViewMemory) {
     btnViewMemory.addEventListener('click', () => {
-      if (!activePersonaId) return;
-      const persona = LocalDB.getPersona(activePersonaId);
-      const messages = LocalDB.getMessages(activePersonaId) || [];
-      memoryTextarea.value = persona?.storyMemory || '';
-
+      const group = activeGroupId ? LocalDB.getGroup(activeGroupId) : null;
+      const persona = activePersonaId ? LocalDB.getPersona(activePersonaId) : null;
+      if (!group && !persona) return;
+      const messages = group ? LocalDB.getGroupMessages(group.id) : LocalDB.getMessages(persona.id);
       const memoryPromptTextarea = document.getElementById('memory-prompt-textarea');
-      if (memoryPromptTextarea) {
-        memoryPromptTextarea.value = persona?.memoryPrompt || '';
+      const memoryPromptGroup = document.getElementById('memory-prompt-group');
+      const memoryTitle = document.getElementById('memory-modal-title');
+      const memoryHelp = document.getElementById('memory-help-text');
+      memoryTextarea.value = group ? group.groupMemory || '' : persona.storyMemory || '';
+      memoryPromptGroup?.classList.toggle('hidden', !!group);
+      if (memoryPromptTextarea) memoryPromptTextarea.value = group ? '' : persona.memoryPrompt || '';
+      if (memoryTitle) memoryTitle.innerHTML = `<i class="fa-solid fa-brain"></i> ${group ? 'Group Memory Log' : 'Story Memory Log'}`;
+      if (memoryHelp) {
+        memoryHelp.textContent = group
+          ? 'This group-only memory records key events visible in this chat. It does not update or expose personal-chat memories.'
+          : 'This persistent story memory is automatically updated every 12 messages and anchors future personal-chat turns.';
       }
 
-      const totalMsgs = messages.length;
-      const lastSyncedCount = persona?.lastSyncedMessageCount || 0;
-      const msgsSinceSync = Math.max(totalMsgs - lastSyncedCount, 0);
-      const msgsRemaining = Math.max(MEMORY_AUTO_SYNC_INTERVAL - msgsSinceSync, 0);
-
+      const totalMessages = messages.length;
+      const lastSyncedCount = (group || persona).lastSyncedMessageCount || 0;
+      const messagesSinceSync = Math.max(totalMessages - lastSyncedCount, 0);
+      const messagesRemaining = Math.max(MEMORY_AUTO_SYNC_INTERVAL - messagesSinceSync, 0);
       const lastSyncEl = document.getElementById('memory-last-sync-time');
       const turnsLeftEl = document.getElementById('memory-turns-remaining');
-
       if (lastSyncEl) {
-        lastSyncEl.textContent = persona?.lastMemorySyncTime
-          ? new Date(persona.lastMemorySyncTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', month: 'short', day: 'numeric' })
-          : (totalMsgs >= MEMORY_AUTO_SYNC_INTERVAL ? 'Initial auto-sync' : 'Never');
+        lastSyncEl.textContent = (group || persona).lastMemorySyncTime
+          ? new Date((group || persona).lastMemorySyncTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', month: 'short', day: 'numeric' })
+          : 'Never';
       }
-
       if (turnsLeftEl) {
-        turnsLeftEl.textContent = msgsRemaining === 0 ? 'Syncing on next message' : `${msgsRemaining} message${msgsRemaining === 1 ? '' : 's'} left`;
+        turnsLeftEl.textContent = messagesRemaining === 0
+          ? 'Ready to sync'
+          : `${messagesRemaining} message${messagesRemaining === 1 ? '' : 's'} left`;
       }
-
-      updateMemorySummarizingUI(activePersonaId);
+      if (persona) updateMemorySummarizingUI(persona.id);
       showModal(memoryModal);
     });
   }
@@ -5297,36 +5544,42 @@ ${recMsgsStr}`;
   const btnForceSummarize = document.getElementById('btn-force-summarize-memory');
   if (btnForceSummarize) {
     btnForceSummarize.addEventListener('click', async () => {
+      if (activeGroupId) {
+        const key = `group:${activeGroupId}`;
+        if (!memorySummarizingState[key] && LocalDB.getGroupMessages(activeGroupId).length) {
+          await triggerGroupMemorySummarization(activeGroupId);
+        }
+        return;
+      }
       if (!activePersonaId || memorySummarizingState[activePersonaId]) return;
       const persona = LocalDB.getPersona(activePersonaId);
       const messages = LocalDB.getMessages(activePersonaId) || [];
-      const settings = LocalDB.getSettings();
-      if (persona && messages.length > 0) {
-        logEvent('MEMORY', `Manual memory summarization triggered by user for ${persona.name}`);
-        await triggerMemorySummarization(persona, messages, settings);
+      if (persona && messages.length) {
+        await triggerMemorySummarization(persona, messages, LocalDB.getSettings());
       }
     });
   }
 
   if (btnSaveMemory) {
     btnSaveMemory.addEventListener('click', () => {
-      if (!activePersonaId) return;
-      const msgs = LocalDB.getMessages(activePersonaId) || [];
-      const nowIso = new Date().toISOString();
-      const memoryPromptTextarea = document.getElementById('memory-prompt-textarea');
-      const memoryPromptVal = memoryPromptTextarea ? memoryPromptTextarea.value.trim() : '';
-
-      const lastMsgId = msgs && msgs.length > 0 ? msgs[msgs.length - 1].id : null;
-      LocalDB.updateMemory(activePersonaId, memoryTextarea.value, lastMsgId);
-      LocalDB.updatePersona(activePersonaId, {
-        lastMemorySyncTime: nowIso,
-        lastSyncedMessageCount: msgs.length,
-        memoryPrompt: memoryPromptVal
-      });
-      logEvent('MEMORY', `Story memory manually updated for persona ${activePersonaId}`, { syncedAtMessageCount: msgs.length });
+      if (activeGroupId) {
+        const messages = LocalDB.getGroupMessages(activeGroupId);
+        LocalDB.updateGroupMemory(activeGroupId, memoryTextarea.value, messages.at(-1)?.id || null);
+      } else if (activePersonaId) {
+        const messages = LocalDB.getMessages(activePersonaId) || [];
+        const memoryPromptTextarea = document.getElementById('memory-prompt-textarea');
+        LocalDB.updateMemory(activePersonaId, memoryTextarea.value, messages.at(-1)?.id || null);
+        LocalDB.updatePersona(activePersonaId, {
+          lastMemorySyncTime: new Date().toISOString(),
+          lastSyncedMessageCount: messages.length,
+          memoryPrompt: memoryPromptTextarea ? memoryPromptTextarea.value.trim() : ''
+        });
+      } else {
+        return;
+      }
       showAlertDialog({
         title: 'Memory Saved',
-        message: 'Story memory log updated successfully.'
+        message: activeGroupId ? 'Group memory updated successfully.' : 'Story memory log updated successfully.'
       });
       hideModal(memoryModal);
     });
@@ -5358,6 +5611,79 @@ ${recMsgsStr}`;
     });
   }
 
+  function renderGroupMemberChoices(selectedIds = []) {
+    const selected = new Set(selectedIds);
+    const available = LocalDB.getPersonas().sort((left, right) => left.name.localeCompare(right.name));
+    groupMemberList.innerHTML = available.length
+      ? available.map(persona => `
+          <label class="group-member-option">
+            <input type="checkbox" name="group-member" value="${escapeHtml(persona.id)}" ${selected.has(persona.id) ? 'checked' : ''}>
+            <img src="${persona.avatarUrl || './uploads/default-avatar.svg'}" alt="" onerror="this.onerror=null; this.src='./uploads/default-avatar.svg';">
+            <span>${escapeHtml(persona.name)}</span>
+          </label>
+        `).join('')
+      : '<div style="padding: 16px; color: var(--text-muted);">Create at least two characters before making a group.</div>';
+  }
+
+  function openGroupModal(groupId = null) {
+    const group = groupId ? LocalDB.getGroup(groupId) : null;
+    document.getElementById('form-group-id').value = group?.id || '';
+    document.getElementById('form-group-name').value = group?.name || '';
+    groupModalTitle.innerHTML = `<i class="fa-solid fa-user-group"></i> ${group ? 'Manage Group Chat' : 'New Group Chat'}`;
+    btnDeleteGroup.classList.toggle('hidden', !group);
+    renderGroupMemberChoices(group?.memberIds || []);
+    showModal(groupModal);
+  }
+
+  function confirmDeleteGroup(groupId) {
+    const group = LocalDB.getGroup(groupId);
+    if (!group) return;
+    showConfirmDialog({
+      title: 'Delete Group',
+      message: `Permanently delete ${group.name}, its messages, and its group memory?`,
+      confirmText: 'Delete Group',
+      danger: true,
+      onConfirm: async () => {
+        LocalDB.deleteGroup(groupId);
+        hideModal(groupModal);
+        if (activeGroupId === groupId) {
+          activeGroupId = null;
+          clearPendingGroupReply();
+          activeChatViewEl.classList.add('hidden');
+          emptyStateEl.classList.remove('hidden');
+        }
+        await loadPersonas();
+      }
+    });
+  }
+
+  if (btnAddGroup) btnAddGroup.addEventListener('click', () => openGroupModal());
+  if (btnCloseGroupModal) btnCloseGroupModal.addEventListener('click', () => hideModal(groupModal));
+  if (btnCancelGroupModal) btnCancelGroupModal.addEventListener('click', () => hideModal(groupModal));
+  if (btnDeleteGroup) {
+    btnDeleteGroup.addEventListener('click', () => {
+      const groupId = document.getElementById('form-group-id').value;
+      if (groupId) confirmDeleteGroup(groupId);
+    });
+  }
+
+  if (groupForm) {
+    groupForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const id = document.getElementById('form-group-id').value || `group-${crypto.randomUUID()}`;
+      const name = document.getElementById('form-group-name').value.trim();
+      const memberIds = [...groupMemberList.querySelectorAll('input[name="group-member"]:checked')]
+        .map(input => input.value);
+      try {
+        LocalDB.saveGroup({ id, name, memberIds });
+        hideModal(groupModal);
+        await loadPersonas();
+        selectGroup(id, true);
+      } catch (error) {
+        showToast(error.message || String(error), 'error');
+      }
+    });
+  }
   // Persona Modal (Add / Edit)
   if (btnAddPersona) {
     btnAddPersona.addEventListener('click', () => {
@@ -5379,6 +5705,10 @@ ${recMsgsStr}`;
 
   if (btnEditPersona) {
     btnEditPersona.addEventListener('click', () => {
+      if (activeGroupId) {
+        openGroupModal(activeGroupId);
+        return;
+      }
       if (!activePersonaId) return;
       const persona = LocalDB.getPersona(activePersonaId);
       if (!persona) return;
