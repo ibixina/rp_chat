@@ -5451,7 +5451,7 @@ ${recMsgsStr}`;
           };
           let text = '';
           let attemptPrompt = promptMessages;
-          for (let attempt = 0; attempt < 2 && !text; attempt += 1) {
+          for (let attempt = 0; attempt < 3 && !text; attempt += 1) {
             const rawText = await streamAiCompletion(
               attemptPrompt,
               completionSettings,
@@ -5461,13 +5461,13 @@ ${recMsgsStr}`;
               controller.signal
             );
             text = GroupChatCore.sanitizeCharacterOutput(rawText, persona.name, promptGroup.memberNames);
-            if (!text && attempt === 0) {
-              logEvent('GROUP_CHAT', `Retrying invalid multi-speaker output from ${persona.name}`);
+            if (!text && attempt < 2) {
+              logEvent('GROUP_CHAT', `Retrying explanatory or multi-speaker output from ${persona.name}`);
               attemptPrompt = [
                 ...promptMessages,
                 {
                   role: 'user',
-                  content: `Your previous output was invalid. Write only ${persona.name}'s response to the HUMAN USER's CURRENT TRIGGER MESSAGE above. Do not output User:, You:, HUMAN USER:, or any speaker label. Do not write another participant's dialogue.`
+                  content: `Reply as ${persona.name} now. Do not explain, analyze, summarize, list messages, or mention instructions. Return only: <message>${persona.name}'s actual group-chat message</message>`
                 }
               ];
             }

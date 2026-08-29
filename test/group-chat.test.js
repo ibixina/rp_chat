@@ -217,13 +217,14 @@ test('character prompts isolate speakers and mark private context as non-public'
     selectionReason: 'topic-relevance'
   });
 
-  assert.match(prompt[0].content, /Private context is internal/);
-  assert.match(prompt[0].content, /Never write dialogue.*HUMAN USER or another character/);
+  assert.match(prompt[0].content, /You are Alice.*speaking for yourself/);
+  assert.match(prompt[0].content, /YOUR PRIVATE RELATIONSHIP WITH THE HUMAN/);
+  assert.match(prompt[0].content, /Never write dialogue.*for the human or another group member/);
   assert.deepEqual(prompt.map(message => message.role), ['system', 'system', 'user']);
-  assert.match(prompt[1].content, /CHARACTER \"Bob\" >>> We could hike\./);
-  assert.match(prompt[1].content, /HUMAN USER >>> Any weekend ideas\?/);
-  assert.match(prompt.at(-1).content, /AUTHOR: HUMAN USER/);
-  assert.match(prompt.at(-1).content, /Write Alice's response to HUMAN USER/);
+  assert.match(prompt[1].content, /Bob: We could hike\./);
+  assert.match(prompt[1].content, /The human: Any weekend ideas\?/);
+  assert.equal(prompt.at(-1).content, 'Any weekend ideas?');
+  assert.doesNotMatch(prompt.map(message => message.content).join('\n'), /CURRENT TRIGGER|GROUP TRANSCRIPT|character tray/i);
 });
 
 test('output sanitation removes wrappers and stops multi-character impersonation', () => {
@@ -303,15 +304,14 @@ test('group prompts make the human and every character unambiguous', () => {
     selectionReason: 'mentioned'
   });
 
-  assert.match(prompt[0].content, /YOU ARE: Taylor Swift/);
-  assert.match(prompt[0].content, /HUMAN USER IS: the real person/);
-  assert.match(prompt[0].content, /Archived private-chat excerpts for background only/);
-  assert.match(prompt[1].content, /HUMAN USER >>> hey/);
-  assert.match(prompt[1].content, /CHARACTER \"Selena Gomez\" >>> hey taylor/);
-  assert.match(prompt[1].content, /HUMAN USER >>> taylor\?/);
-  assert.doesNotMatch(prompt[1].content, /\[You\]|^\s*You:/m);
-  assert.match(prompt[2].content, /HUMAN USER addressed YOU, Taylor Swift, by name/);
-  assert.match(prompt[2].content, /do not write what HUMAN USER says/);
+  assert.match(prompt[0].content, /You are Taylor Swift.*speaking for yourself/);
+  assert.match(prompt[0].content, /YOUR PRIVATE RELATIONSHIP WITH THE HUMAN/);
+  assert.match(prompt[0].content, /Recent private conversation for relationship context only/);
+  assert.match(prompt[1].content, /The human: hey/);
+  assert.match(prompt[1].content, /Selena Gomez: hey taylor/);
+  assert.match(prompt[1].content, /The human: taylor\?/);
+  assert.equal(prompt.at(-1).content, 'taylor?');
+  assert.doesNotMatch(prompt.map(message => message.content).join('\n'), /HUMAN USER|CURRENT TRIGGER|ROLE ASSIGNMENT/);
 });
 
 test('character tray prompts target exactly the selected character', () => {
@@ -327,14 +327,19 @@ test('character tray prompts target exactly the selected character', () => {
     persona,
     group,
     groupMemory: '',
-    groupMessages: [{ id: 's1', sender: 'persona', personaId: 'selena', personaName: 'Selena Gomez', text: 'Any thoughts?' }],
+    groupMessages: [
+      { id: 's1', sender: 'persona', personaId: 'selena', personaName: 'Selena Gomez', text: 'Any thoughts?' },
+      { id: 's2', sender: 'persona', personaId: 'selena', personaName: 'Selena Gomez', text: 'Any thoughts?' }
+    ],
     personalMessages: [],
     userMessage: { id: 'tray-1', sender: 'user', text: '', isNudge: true, isCharacterPrompt: true },
     selectionReason: 'manual-character'
   });
-  assert.match(prompt[2].content, /selected Taylor Swift from the character tray/);
-  assert.match(prompt[2].content, /explicitly selected Taylor Swift/);
-  assert.doesNotMatch(prompt[2].content, /sent no text and requested the next natural/);
+  assert.match(prompt[0].content, /You are Taylor Swift.*speaking for yourself/);
+  assert.match(prompt[1].content, /Selena Gomez: Any thoughts\?/);
+  assert.equal((prompt[1].content.match(/Selena Gomez: Any thoughts\?/g) || []).length, 1);
+  assert.equal(prompt.at(-1).content, 'Continue the group conversation naturally from the most recent message.');
+  assert.doesNotMatch(prompt.map(message => message.content).join('\n'), /character tray|CURRENT TRIGGER|selected Taylor Swift/i);
 });
 
 test('group memory prompt contains only group-visible sources', () => {
@@ -407,6 +412,22 @@ test('low-capability multi-speaker output is rejected when it starts as another 
   assert.equal(
     GroupChatCore.sanitizeCharacterOutput('[HUMAN USER:] Wrong speaker.', 'Alice', ['Alice', 'Bob']),
     ''
+  );
+  assert.equal(
+    GroupChatCore.sanitizeCharacterOutput(
+      "The user wants me to write Alice's next group-chat message. Looking at the transcript, let me trace the actual flow. The CURRENT TRIGGER says the user selected Alice.",
+      'Alice',
+      ['Alice', 'Bob']
+    ),
+    ''
+  );
+  assert.equal(
+    GroupChatCore.sanitizeCharacterOutput(
+      'Looking at the transcript, I should answer briefly. <message>Hey, I am still here.</message>',
+      'Alice',
+      ['Alice', 'Bob']
+    ),
+    'Hey, I am still here.'
   );
 });
 
