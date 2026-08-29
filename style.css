@@ -1053,6 +1053,10 @@ body, html {
   left: 4px;
 }
 
+.message-bubble.toolbar-below {
+  z-index: 30;
+}
+
 .message-bubble.toolbar-below .message-actions-toolbar {
   top: calc(100% + 4px);
   transform: translateY(-4px);

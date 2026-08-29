@@ -145,9 +145,9 @@ The request sent to the provider is assembled as:
 
 Groups reuse existing personas rather than copying them. Each selected responder receives its own character description, personal relationship memory, recent personal-chat continuity, group memory, and recent group transcript. Private-chat context shapes familiarity and personality but is explicitly marked as internal; group memory contains only events visible in that group.
 
-Responder selection happens in application logic before generation. Directly replying to a character guarantees that character is selected. Otherwise, name mentions, topic overlap, recent participation, and a speaker cooldown choose a maximum of three relevant characters. Each response is generated independently and sequentially, so later responders can naturally react to earlier ones without asking one model to simulate the whole group.
+Responder selection happens in application logic before generation. Directly replying to a character guarantees that character is selected. Otherwise, name mentions, topic overlap, recent participation, group-directed greetings, and a speaker cooldown choose up to three relevant characters. A two-character group can produce one or both responses depending on the message; larger groups still avoid routine every-member pile-ons. Responses are generated independently and sequentially so later speakers can react naturally to earlier ones.
 
-Hover or tap a group message's reply action to quote it. Groups can be renamed, have members added or removed, exported, cleared with their group memory, or permanently deleted.
+Hover or tap group messages to reply, regenerate a response with an optional instruction, continue a character's message, or regenerate the group turn from a user message. Sending an empty input requests a natural next group turn without adding an empty user bubble. Groups can be renamed, have members added or removed, exported, cleared with their group memory, or permanently deleted.
 
 ## Memory system
 
@@ -162,9 +162,9 @@ Group chats maintain a separate four-section memory for key events, group dynami
 
 ## Regenerating responses
 
-Hover a persona bubble and use the regenerate action (or the retry button on an error message):
+Hover a character bubble in a personal or group chat and use the regenerate action (or the retry button on an error message):
 
-- **Regenerate** opens a modal where you can type a one-turn instruction ("make it shorter", "react physically first"). The instruction becomes a steering system message appended right before the end instruction, and the response is streamed with an overwrite effect over the old bubble.
+- **Regenerate** opens a modal for a one-turn instruction ("make it shorter", "sound more playful"). Personal chats overwrite the old bubble in place; group chats rebuild that character's response from the same trigger while preserving speaker identity.
 - **Shift/click or Ctrl/click** regenerates immediately, reusing the previous instruction if one was set.
 - The instruction is saved on the message, so you can re-run the same regeneration later.
 

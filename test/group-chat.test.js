@@ -218,9 +218,12 @@ test('character prompts isolate speakers and mark private context as non-public'
   });
 
   assert.match(prompt[0].content, /Private context is internal/);
-  assert.match(prompt[0].content, /Never write their dialogue/);
-  assert.deepEqual(prompt.slice(1, 3).map(message => message.role), ['user', 'user']);
-  assert.match(prompt.at(-1).content, /Write only Alice/);
+  assert.match(prompt[0].content, /Never write dialogue.*HUMAN USER or another character/);
+  assert.deepEqual(prompt.map(message => message.role), ['system', 'system', 'user']);
+  assert.match(prompt[1].content, /CHARACTER \"Bob\" >>> We could hike\./);
+  assert.match(prompt[1].content, /HUMAN USER >>> Any weekend ideas\?/);
+  assert.match(prompt.at(-1).content, /AUTHOR: HUMAN USER/);
+  assert.match(prompt.at(-1).content, /Write Alice's response to HUMAN USER/);
 });
 
 test('output sanitation removes wrappers and stops multi-character impersonation', () => {
@@ -233,6 +236,82 @@ test('output sanitation removes wrappers and stops multi-character impersonation
     'I agree.'
   );
   assert.equal(GroupChatCore.sanitizeCharacterOutput('   ', 'Alice', ['Alice']), '');
+});
+
+test('group-directed greetings and natural turns can produce multiple responders', () => {
+  const personas = [
+    { id: 'selena', name: 'Selena Gomez', description: 'Warm and sociable.' },
+    { id: 'taylor', name: 'Taylor Swift', description: 'Witty and observant.' }
+  ];
+  const group = { id: 'duo', name: 'Friends', memberIds: personas.map(persona => persona.id) };
+  const greeting = { id: 'hello-1', sender: 'user', text: 'hey' };
+  const greetingSelection = GroupChatCore.selectResponders({
+    group, personas, messages: [greeting], userMessage: greeting
+  });
+  assert.equal(greetingSelection.length, 2);
+
+  const turnSizes = new Set();
+  for (let index = 0; index < 40; index += 1) {
+    const userMessage = { id: `neutral-${index}`, sender: 'user', text: 'That was interesting.' };
+    turnSizes.add(GroupChatCore.selectResponders({
+      group, personas, messages: [userMessage], userMessage
+    }).length);
+  }
+  assert.deepEqual([...turnSizes].sort(), [1, 2]);
+});
+
+test('any distinctive part of a character name counts as a mention', () => {
+  const personas = [
+    { id: 'alice', name: 'Import Alice', description: 'A planner.' },
+    { id: 'cara', name: 'Import Cara', description: 'A musician.' }
+  ];
+  const group = { id: 'duo', name: 'Friends', memberIds: personas.map(persona => persona.id) };
+  const userMessage = { id: 'mention-cara', sender: 'user', text: 'cara?' };
+  const selected = GroupChatCore.selectResponders({
+    group, personas, messages: [userMessage], userMessage
+  });
+  assert.equal(selected[0].personaId, 'cara');
+  assert.equal(selected[0].reason, 'mentioned');
+});
+
+test('group prompts make the human and every character unambiguous', () => {
+  const persona = {
+    id: 'taylor',
+    name: 'Taylor Swift',
+    description: 'Witty, direct, and thoughtful.',
+    storyMemory: 'Taylor knows the human user from their private chat.'
+  };
+  const group = {
+    id: 'duo',
+    name: 'tayl',
+    memberIds: ['selena', 'taylor'],
+    memberNames: ['Selena Gomez', 'Taylor Swift'],
+    memberNameById: { selena: 'Selena Gomez', taylor: 'Taylor Swift' }
+  };
+  const userMessage = { id: 'u2', sender: 'user', text: 'taylor?' };
+  const prompt = GroupChatCore.buildCharacterPrompt({
+    persona,
+    group,
+    groupMemory: '',
+    groupMessages: [
+      { id: 'u1', sender: 'user', text: 'hey' },
+      { id: 's1', sender: 'persona', personaId: 'selena', personaName: 'Selena Gomez', text: 'hey taylor' },
+      userMessage
+    ],
+    personalMessages: [{ sender: 'user', text: 'This is an archived private message.' }],
+    userMessage,
+    selectionReason: 'mentioned'
+  });
+
+  assert.match(prompt[0].content, /YOU ARE: Taylor Swift/);
+  assert.match(prompt[0].content, /HUMAN USER IS: the real person/);
+  assert.match(prompt[0].content, /Archived private-chat excerpts for background only/);
+  assert.match(prompt[1].content, /HUMAN USER >>> hey/);
+  assert.match(prompt[1].content, /CHARACTER \"Selena Gomez\" >>> hey taylor/);
+  assert.match(prompt[1].content, /HUMAN USER >>> taylor\?/);
+  assert.doesNotMatch(prompt[1].content, /\[You\]|^\s*You:/m);
+  assert.match(prompt[2].content, /HUMAN USER addressed YOU, Taylor Swift, by name/);
+  assert.match(prompt[2].content, /do not write what HUMAN USER says/);
 });
 
 test('group memory prompt contains only group-visible sources', () => {
@@ -293,6 +372,18 @@ test('low-capability multi-speaker output is rejected when it starts as another 
   assert.equal(
     GroupChatCore.sanitizeCharacterOutput('\"Alice\": Still me.', 'Alice', ['Alice', 'Bob']),
     'Still me.'
+  );
+  assert.equal(
+    GroupChatCore.sanitizeCharacterOutput('You: what did you just call me', 'Alice', ['Alice', 'Bob']),
+    ''
+  );
+  assert.equal(
+    GroupChatCore.sanitizeCharacterOutput('*User:* I should answer myself.', 'Alice', ['Alice', 'Bob']),
+    ''
+  );
+  assert.equal(
+    GroupChatCore.sanitizeCharacterOutput('[HUMAN USER:] Wrong speaker.', 'Alice', ['Alice', 'Bob']),
+    ''
   );
 });
 

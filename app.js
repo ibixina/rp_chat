@@ -393,6 +393,17 @@ document.addEventListener('DOMContentLoaded', () => {
       return GroupChatCore.getMessages(this.getRaw(), groupId);
     },
 
+    setGroupMessages(groupId, messages) {
+      const raw = this.getRaw();
+      if (!GroupChatCore.getGroup(raw, groupId)) return false;
+      raw.groupMessages[groupId] = (messages || []).map(message => ({
+        ...message,
+        text: this.sanitizeText(message.text)
+      }));
+      this.saveRaw(raw);
+      return true;
+    },
+
     addGroupMessage(groupId, message) {
       if (message && message.text) message.text = this.sanitizeText(message.text);
       const raw = this.getRaw();
@@ -3770,6 +3781,7 @@ ${recMsgsStr}`;
   // -------------------------------------------------------------
   let pendingRetryMsgId = null;
   let isPendingErrorRetry = false;
+  let pendingRetryGroupId = null;
 
   const retryModalEl = document.getElementById('retry-instruction-modal');
   const retryInputEl = document.getElementById('retry-instruction-input');
@@ -3781,13 +3793,13 @@ ${recMsgsStr}`;
     pendingRetryMsgId = msgId;
     isPendingErrorRetry = isErrorRetry;
 
+    pendingRetryGroupId = activeGroupId;
     let instructionToUse = existingInstruction || '';
-    if (!instructionToUse && msgId && !isErrorRetry && activePersonaId) {
-      const msgs = LocalDB.getMessages(activePersonaId);
-      const targetMsg = msgs.find(m => m.id === msgId);
-      if (targetMsg && targetMsg.retryInstruction) {
-        instructionToUse = targetMsg.retryInstruction;
-      }
+    if (!instructionToUse && msgId && !isErrorRetry) {
+      const targetMsg = activeGroupId
+        ? LocalDB.getGroupMessages(activeGroupId).find(message => message.id === msgId)
+        : LocalDB.getMessages(activePersonaId).find(message => message.id === msgId);
+      if (targetMsg?.retryInstruction) instructionToUse = targetMsg.retryInstruction;
     }
 
     if (retryInputEl) retryInputEl.value = instructionToUse;
@@ -3805,6 +3817,7 @@ ${recMsgsStr}`;
   function closeRetryModal() {
     pendingRetryMsgId = null;
     isPendingErrorRetry = false;
+    pendingRetryGroupId = null;
     if (retryInputEl) retryInputEl.value = '';
     if (retryModalEl) hideModal(retryModalEl);
   }
@@ -3816,8 +3829,13 @@ ${recMsgsStr}`;
     btnConfirmRetry.addEventListener('click', () => {
       const msgId = pendingRetryMsgId;
       const isErr = isPendingErrorRetry;
+      const retryGroupId = pendingRetryGroupId;
       const instruction = retryInputEl ? retryInputEl.value.trim() : '';
       closeRetryModal();
+      if (retryGroupId && msgId) {
+        retryGroupMessage(retryGroupId, msgId, instruction);
+        return;
+      }
       if (isErr) {
         if (msgId && msgId !== activePersonaId) {
           LocalDB.deleteMessage(activePersonaId, msgId);
@@ -4409,6 +4427,16 @@ ${recMsgsStr}`;
           <button class="action-btn reply-btn" title="Reply to this message">
             <i class="fa-solid fa-reply"></i>
           </button>
+          ${isPersona ? `
+            ${msg.isError ? '' : '<button class="action-btn continue-btn" title="Continue this character message"><i class="fa-solid fa-play"></i></button>'}
+            <button class="action-btn retry-btn" title="Regenerate this character's response (Hold Shift for instant retry)">
+              <i class="fa-solid fa-rotate"></i>
+            </button>
+          ` : `
+            <button class="action-btn generate-btn" title="Regenerate group responses from this message">
+              <i class="fa-solid fa-paper-plane"></i>
+            </button>
+          `}
         ` : isPersona ? `
           <button class="action-btn continue-btn" title="Continue persona generation">
             <i class="fa-solid fa-play"></i>
@@ -4503,7 +4531,10 @@ ${recMsgsStr}`;
       retryBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         const existingInstruction = msg.retryInstruction || '';
-        if (e.shiftKey || e.ctrlKey) {
+        if (inGroup) {
+          if (e.shiftKey || e.ctrlKey) retryGroupMessage(activeGroupId, msg.id, existingInstruction);
+          else openRetryModal(msg.id, false, existingInstruction);
+        } else if (e.shiftKey || e.ctrlKey) {
           retryMessage(msg.id, existingInstruction);
         } else {
           openRetryModal(msg.id, false, existingInstruction);
@@ -4516,7 +4547,8 @@ ${recMsgsStr}`;
     if (continueBtn) {
       continueBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        continuePersonaMessage(msg, bubble);
+        if (inGroup) continueGroupMessage(msg, bubble);
+        else continuePersonaMessage(msg, bubble);
       });
     }
     // Generate Response for User Message
@@ -4524,7 +4556,8 @@ ${recMsgsStr}`;
     if (generateBtn) {
       generateBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        generateResponseForUserMessage(msg.id);
+        if (inGroup) generateGroupResponseForUserMessage(msg.id);
+        else generateResponseForUserMessage(msg.id);
       });
     }
 
@@ -4763,7 +4796,22 @@ ${recMsgsStr}`;
   async function sendGroupMessage() {
     const groupId = activeGroupId;
     const text = messageInput.value.trim();
-    if (!groupId || generatingGroups[groupId] || !text) return;
+    if (!groupId || generatingGroups[groupId]) return;
+    if (!text) {
+      const nudge = {
+        id: `group-nudge-${crypto.randomUUID()}`,
+        sender: 'user',
+        text: '',
+        isNudge: true,
+        ...(pendingGroupReply ? {
+          replyToId: pendingGroupReply.id,
+          replyToSnapshot: { ...pendingGroupReply }
+        } : {})
+      };
+      clearPendingGroupReply();
+      await generateGroupResponses(groupId, null, { userMessage: nudge });
+      return;
+    }
     const userMessage = {
       id: `gmsg-${crypto.randomUUID()}`,
       sender: 'user',
@@ -5049,16 +5097,17 @@ ${recMsgsStr}`;
     }
   }
 
-  async function generateGroupResponses(groupId, userMessageId) {
+  async function generateGroupResponses(groupId, userMessageId, options = {}) {
     if (generatingGroups[groupId]) return [];
     const group = LocalDB.getGroup(groupId);
-    const userMessage = LocalDB.getGroupMessages(groupId).find(message => message.id === userMessageId);
+    const userMessage = options.userMessage
+      || LocalDB.getGroupMessages(groupId).find(message => message.id === userMessageId);
     if (!group || !userMessage || userMessage.sender !== 'user') return [];
 
     const controller = new AbortController();
     generatingGroups[groupId] = true;
     generationControllers[`group:${groupId}`] = controller;
-    LocalDB.updateGroupMessage(groupId, userMessageId, { isRead: true });
+    if (userMessageId) LocalDB.updateGroupMessage(groupId, userMessageId, { isRead: true });
 
     const replyTarget = userMessage.replyToId
       ? LocalDB.getGroupMessages(groupId).find(message => message.id === userMessage.replyToId) || userMessage.replyToSnapshot || null
@@ -5067,7 +5116,7 @@ ${recMsgsStr}`;
     const personalMessages = Object.fromEntries(
       groupPersonas.map(persona => [persona.id, LocalDB.getMessages(persona.id)])
     );
-    const selected = GroupChatCore.selectResponders({
+    let selected = GroupChatCore.selectResponders({
       group,
       personas: groupPersonas,
       messages: LocalDB.getGroupMessages(groupId),
@@ -5075,6 +5124,11 @@ ${recMsgsStr}`;
       replyTarget,
       personalMessages
     });
+    if (options.forcedPersonaId) {
+      selected = groupPersonas.some(persona => persona.id === options.forcedPersonaId)
+        ? [{ personaId: options.forcedPersonaId, score: 1000, reason: 'manual-retry' }]
+        : [];
+    }
     const responses = [];
     const errors = [];
 
@@ -5110,7 +5164,7 @@ ${recMsgsStr}`;
           ...message,
           personaName: message.personaId ? memberNameById[message.personaId] : null
         }));
-        const promptMessages = GroupChatCore.buildCharacterPrompt({
+        let promptMessages = GroupChatCore.buildCharacterPrompt({
           persona,
           group: promptGroup,
           groupMemory: currentGroup.groupMemory,
@@ -5123,6 +5177,15 @@ ${recMsgsStr}`;
           } : null,
           selectionReason: selection.reason
         });
+        if (options.customInstruction?.trim()) {
+          promptMessages = [
+            ...promptMessages,
+            {
+              role: 'user',
+              content: `Additional instruction for ${persona.name}'s response only: ${options.customInstruction.trim()}`
+            }
+          ];
+        }
 
         try {
           const settings = LocalDB.getSettings();
@@ -5132,7 +5195,7 @@ ${recMsgsStr}`;
           };
           const bridgeContext = {
             threadId: `${window.location.origin}|group:${groupId}:${persona.id}`,
-            messageId: userMessageId,
+            messageId: userMessage.id || '',
             memory: `${persona.storyMemory || ''}\n\n${currentGroup.groupMemory || ''}`,
             instructionRevision: JSON.stringify([
               currentGroup.name,
@@ -5160,14 +5223,15 @@ ${recMsgsStr}`;
               attemptPrompt = [
                 ...promptMessages,
                 {
-                  role: 'system',
-                  content: `Correction: Return only ${persona.name}'s own message. Do not write any other participant's name, label, dialogue, or reaction.`
+                  role: 'user',
+                  content: `Your previous output was invalid. Write only ${persona.name}'s response to the HUMAN USER's CURRENT TRIGGER MESSAGE above. Do not output User:, You:, HUMAN USER:, or any speaker label. Do not write another participant's dialogue.`
                 }
               ];
             }
           }
           if (!text) throw new Error(`${persona.name} returned no usable in-character message.`);
 
+          const isDirectResponse = replyTarget?.sender === 'persona' && replyTarget.personaId === persona.id;
           const response = {
             id: `gmsg-${crypto.randomUUID()}`,
             sender: 'persona',
@@ -5175,8 +5239,10 @@ ${recMsgsStr}`;
             personaName: persona.name,
             text,
             timestamp: new Date().toISOString(),
-            respondingToId: userMessageId,
-            ...(selection.reason === 'direct-reply' ? {
+            ...(!userMessageId && userMessage.isNudge ? { nudgeTrigger: true } : {}),
+            ...(userMessageId ? { respondingToId: userMessageId } : {}),
+            ...(options.customInstruction?.trim() ? { retryInstruction: options.customInstruction.trim() } : {}),
+            ...(userMessageId && isDirectResponse ? {
               replyToId: userMessageId,
               replyToSnapshot: {
                 id: userMessage.id,
@@ -5192,8 +5258,21 @@ ${recMsgsStr}`;
           if (activeGroupId === groupId) renderGroupChatFeed(groupId);
         } catch (error) {
           if (error?.name === 'AbortError') break;
-          errors.push({ personaId: persona.id, message: error.message || String(error) });
-          logEvent('GROUP_CHAT', `${persona.name} response skipped: ${error.message || error}`);
+          const errorMessage = error.message || String(error);
+          errors.push({ personaId: persona.id, message: errorMessage });
+          LocalDB.addGroupMessage(groupId, {
+            id: `gerr-${crypto.randomUUID()}`,
+            sender: 'persona',
+            personaId: persona.id,
+            personaName: persona.name,
+            text: `⚠️ ${persona.name} could not respond: ${errorMessage}`,
+            timestamp: new Date().toISOString(),
+            isError: true,
+            ...(!userMessageId && userMessage.isNudge ? { nudgeTrigger: true } : {}),
+            ...(userMessageId ? { respondingToId: userMessageId } : {}),
+            ...(options.customInstruction?.trim() ? { retryInstruction: options.customInstruction.trim() } : {})
+          });
+          logEvent('GROUP_CHAT', `${persona.name} response skipped: ${errorMessage}`);
         }
       }
       const updatedGroup = LocalDB.getGroup(groupId);
@@ -5217,6 +5296,142 @@ ${recMsgsStr}`;
       renderContactList();
     }
     return responses;
+  }
+
+  function findGroupTriggerMessage(messages, responseIndex) {
+    const response = messages[responseIndex];
+    if (response?.respondingToId) {
+      const trigger = messages.find(message => message.id === response.respondingToId && message.sender === 'user');
+      if (trigger) return trigger;
+    }
+    for (let index = responseIndex - 1; index >= 0; index -= 1) {
+      if (messages[index].sender === 'user') return messages[index];
+    }
+    return null;
+  }
+
+  async function retryGroupMessage(groupId, messageId, customInstruction = '') {
+    if (!groupId || generatingGroups[groupId]) return;
+    const messages = LocalDB.getGroupMessages(groupId);
+    const responseIndex = messages.findIndex(message => message.id === messageId && message.sender === 'persona');
+    if (responseIndex < 0) return;
+    const response = messages[responseIndex];
+    const trigger = findGroupTriggerMessage(messages, responseIndex);
+    const nudge = !trigger && response.nudgeTrigger
+      ? { id: `group-nudge-${crypto.randomUUID()}`, sender: 'user', text: '', isNudge: true }
+      : null;
+    if (!trigger && !nudge) return;
+
+    LocalDB.setGroupMessages(groupId, messages.slice(0, responseIndex));
+    if (activeGroupId === groupId) renderGroupChatFeed(groupId);
+    const replacements = await generateGroupResponses(groupId, trigger?.id || null, {
+      userMessage: nudge || undefined,
+      forcedPersonaId: response.personaId,
+      customInstruction
+    });
+    if (!replacements.length) {
+      LocalDB.setGroupMessages(groupId, messages);
+      if (activeGroupId === groupId) renderGroupChatFeed(groupId);
+    }
+  }
+
+  async function generateGroupResponseForUserMessage(messageId) {
+    const groupId = activeGroupId;
+    if (!groupId || generatingGroups[groupId]) return;
+    const messages = LocalDB.getGroupMessages(groupId);
+    const targetIndex = messages.findIndex(message => message.id === messageId && message.sender === 'user');
+    if (targetIndex < 0) return;
+    const originalMessages = messages;
+    LocalDB.setGroupMessages(groupId, messages.slice(0, targetIndex + 1));
+    renderGroupChatFeed(groupId);
+    const responses = await generateGroupResponses(groupId, messageId);
+    if (!responses.length) {
+      LocalDB.setGroupMessages(groupId, originalMessages);
+      renderGroupChatFeed(groupId);
+    }
+  }
+
+  async function continueGroupMessage(message, bubble) {
+    const groupId = activeGroupId;
+    if (!groupId || generatingGroups[groupId] || message.sender !== 'persona') return;
+    const messages = LocalDB.getGroupMessages(groupId);
+    const responseIndex = messages.findIndex(item => item.id === message.id);
+    if (responseIndex < 0) return;
+    const storedTrigger = findGroupTriggerMessage(messages, responseIndex);
+    const trigger = storedTrigger || (message.nudgeTrigger
+      ? { id: `group-nudge-${crypto.randomUUID()}`, sender: 'user', text: '', isNudge: true }
+      : null);
+    const persona = LocalDB.getPersona(message.personaId);
+    const group = LocalDB.getGroup(groupId);
+    if (!trigger || !persona || !group) return;
+
+    const controller = new AbortController();
+    generatingGroups[groupId] = true;
+    generationControllers[`group:${groupId}`] = controller;
+    updateGenerationControls();
+    showTypingIndicator();
+    currentStatusEl.textContent = `${persona.name} is typing...`;
+    currentStatusEl.className = 'status-subtitle typing';
+
+    try {
+      const memberNameById = Object.fromEntries(
+        group.memberIds.map(memberId => [memberId, LocalDB.getPersona(memberId)?.name || 'Former member'])
+      );
+      const promptGroup = {
+        ...group,
+        memberNameById,
+        memberNames: Object.values(memberNameById)
+      };
+      const replyTarget = trigger.replyToId
+        ? messages.find(item => item.id === trigger.replyToId) || trigger.replyToSnapshot || null
+        : null;
+      let promptMessages = GroupChatCore.buildCharacterPrompt({
+        persona,
+        group: promptGroup,
+        groupMemory: group.groupMemory,
+        groupMessages: messages.map(item => ({
+          ...item,
+          personaName: item.personaId ? memberNameById[item.personaId] : null
+        })),
+        personalMessages: LocalDB.getMessages(persona.id),
+        userMessage: trigger,
+        replyTarget,
+        selectionReason: 'manual-retry'
+      });
+      promptMessages = [
+        ...promptMessages,
+        {
+          role: 'user',
+          content: `Continue ${persona.name}'s existing group message below. Add only new content that follows naturally. Do not repeat, summarize, or rewrite the existing text. Do not use a speaker label.\n\nEXISTING MESSAGE:\n${message.text}`
+        }
+      ];
+      const settings = LocalDB.getSettings();
+      const rawText = await streamAiCompletion(promptMessages, {
+        ...settings,
+        maxTokens: Math.min(parseInt(settings.groupMaxTokens, 10) || 450, 700)
+      }, null, false, {
+        threadId: `${window.location.origin}|group:${groupId}:${persona.id}`,
+        messageId: message.id,
+        memory: `${persona.storyMemory || ''}\n\n${group.groupMemory || ''}`,
+        instructionRevision: `group-continuation-v1|${message.id}`,
+        mode: 'group-chat'
+      }, controller.signal);
+      const continuation = GroupChatCore.sanitizeCharacterOutput(rawText, persona.name, promptGroup.memberNames);
+      if (!continuation) throw new Error(`${persona.name} returned no usable continuation.`);
+      LocalDB.updateGroupMessage(groupId, message.id, { text: `${message.text}\n\n${continuation}` });
+    } catch (error) {
+      if (error?.name !== 'AbortError') showToast(error.message || String(error), 'error');
+    } finally {
+      generatingGroups[groupId] = false;
+      delete generationControllers[`group:${groupId}`];
+      if (activeGroupId === groupId) {
+        removeTypingIndicator();
+        updateGroupHeaderStatus(groupId);
+        updateGenerationControls();
+        renderGroupChatFeed(groupId);
+      }
+      renderContactList();
+    }
   }
   async function retryMessage(msgId, customInstruction = '') {
     const targetPersonaId = activePersonaId;

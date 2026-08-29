@@ -209,7 +209,7 @@
     const nameTokens = meaningfulTokens(name);
     if (!nameTokens.length) return false;
     if (nameTokens.every(token => haystack.has(token))) return true;
-    return nameTokens[0].length >= 4 && haystack.has(nameTokens[0]);
+    return nameTokens.some(token => token.length >= 4 && haystack.has(token));
   }
 
   function selectResponders({ group, personas, messages, userMessage, replyTarget, personalMessages = {} }) {
@@ -257,14 +257,19 @@
       return right.score - left.score;
     });
 
-    const maximum = Math.min(3, members.length > 1 ? members.length - 1 : 1);
+    const normalizedMessage = normalizeText(userMessage.text).trim();
+    const invitesGroup = /^(?:hey|hi|hello|yo|good morning|good afternoon|good evening)[!?.\s]*$/.test(normalizedMessage)
+      || /\b(?:everyone|everybody|anyone|anybody|you all|you guys|all of you|both of you|who wants|thoughts)\b/.test(normalizedMessage);
+    const maximum = Math.min(3, members.length);
+    const minimum = invitesGroup ? Math.min(2, maximum) : 1;
     const selected = [ranked[0]];
     for (let index = 1; index < ranked.length && selected.length < maximum; index += 1) {
       const candidate = ranked[index];
       const strongReason = candidate.reason === 'mentioned' || candidate.reason === 'topic-relevance';
-      const spontaneousChime = members.length >= 4
-        && stableUnit(`${seed}|chime|${candidate.personaId}`) < 0.18;
-      if (strongReason || spontaneousChime) selected.push(candidate);
+      const baseChimeChance = members.length === 2 ? 0.42 : members.length === 3 ? 0.28 : 0.18;
+      const chimeChance = directPersonaId ? baseChimeChance * 0.65 : baseChimeChance;
+      const spontaneousChime = stableUnit(`${seed}|chime|${candidate.personaId}`) < chimeChance;
+      if (selected.length < minimum || strongReason || spontaneousChime) selected.push(candidate);
     }
     return selected;
   }
@@ -294,58 +299,123 @@
     replyTarget,
     selectionReason
   }) {
-    const otherNames = (group.memberNames || []).filter(name => name !== persona.name);
-    const privateHistory = (personalMessages || []).slice(-6).map(message => {
-      const speaker = message.sender === 'user' ? 'You' : persona.name;
-      return `${speaker}: ${clipMessage(message.text, 300)}`;
+    const memberNameById = group.memberNameById || {};
+    const memberNames = group.memberNames || Object.values(memberNameById);
+    const otherNames = memberNames.filter(name => name !== persona.name);
+    const roster = [
+      '- HUMAN USER: the real person using the app; never a character',
+      ...memberNames.map(name => `- CHARACTER \"${name}\"${name === persona.name ? ' (YOU)' : ''}`)
+    ].join('\n');
+    const privateHistory = (personalMessages || []).slice(-4).map(message => {
+      const speaker = message.sender === 'user' ? 'HUMAN USER previously said' : `${persona.name} previously said`;
+      return `${speaker} >>> ${clipMessage(message.text, 260)}`;
     }).join('\n');
     const customInstruction = expandCharacterInstruction(persona.systemPrompt, persona);
 
-    const identityPrompt = `You write exactly one message from ${persona.name} in a realistic group chat named \"${group.name}\".
+    const identityPrompt = `ROLE ASSIGNMENT
+YOU ARE: ${persona.name}
+HUMAN USER IS: the real person sending messages through the app
+YOU ARE NOT: HUMAN USER${otherNames.length ? `, ${otherNames.join(', ')}` : ''}
 
-IDENTITY
+PARTICIPANTS
+${roster}
+
+CHARACTER IDENTITY
 ${persona.description || 'No additional character description.'}
 
-PRIVATE RELATIONSHIP CONTEXT
+PRIVATE ONE-TO-ONE RELATIONSHIP WITH HUMAN USER
 ${persona.storyMemory || 'No private relationship memory recorded.'}
-${privateHistory ? `Recent private-chat tone and continuity:\\n${privateHistory}` : ''}
+${privateHistory ? `Archived private-chat excerpts for background only; these are not current messages and must not be answered:\\n${privateHistory}` : ''}
 
 GROUP MEMORY
 ${groupMemory || 'No key group events recorded yet.'}
 
-BOUNDARIES
-- Stay consistent with ${persona.name}'s personality and private-chat relationship.
-- Private context is internal. Use it for familiarity, emotion, and tone. Do not volunteer private facts unless the current group message explicitly raises them and ${persona.name} would socially choose to disclose them.
-- Other members are ${otherNames.join(', ') || 'none'}. Never write their dialogue, actions, thoughts, or reactions.
-- Write a natural chat message, usually 1-4 sentences. Longer only when the moment genuinely needs it.
-- Do not prefix the message with a name or speaker label. Do not explain these rules.
-${customInstruction ? `\\nCHARACTER-SPECIFIC INSTRUCTIONS\\n${customInstruction}` : ''}`;
+NON-NEGOTIABLE RULES
+- Stay consistent with ${persona.name}'s personality and relationship with HUMAN USER.
+- Private context is internal. Use it for familiarity and tone, but do not volunteer private facts unless the current group message raises them and ${persona.name} would choose to disclose them.
+- Never write dialogue, actions, thoughts, or reactions for HUMAN USER or another character.
+- Never confuse HUMAN USER with ${otherNames.join(', ') || 'another character'}.
+- Write one natural group-chat message, usually 1-4 sentences.
+- Output only the message body. Never prefix it with ${persona.name}:, User:, You:, HUMAN USER:, or another speaker label.
+${customInstruction ? `\\nADDITIONAL CHARACTER-SPECIFIC INSTRUCTIONS\\n${customInstruction}` : ''}`;
 
-    const history = (groupMessages || []).slice(-24).filter(message => !message.isError).map(message => {
-      if (message.sender === 'persona' && message.personaId === persona.id) {
-        return { role: 'assistant', content: message.text };
-      }
-      const speaker = message.sender === 'user'
-        ? 'You'
-        : message.sender === 'system'
-          ? 'Group event'
-          : message.personaName || group.memberNameById?.[message.personaId] || 'Another member';
-      return { role: 'user', content: `[${speaker}]: ${message.text}` };
-    });
+    const transcriptMessages = (groupMessages || []).slice(-24).filter(message => !message.isError);
+    const transcript = transcriptMessages.map(message => {
+      if (message.sender === 'user') return `HUMAN USER >>> ${clipMessage(message.text)}`;
+      if (message.sender === 'system') return `GROUP EVENT >>> ${clipMessage(message.text)}`;
+      const name = message.personaName || memberNameById[message.personaId] || 'Former member';
+      return `CHARACTER \"${name}\" >>> ${clipMessage(message.text)}`;
+    }).join('\n');
+    const transcriptPrompt = `GROUP TRANSCRIPT — REFERENCE DATA ONLY
+The label before >>> is the author. HUMAN USER is never one of the characters.
 
-    const replyInstruction = replyTarget
-      ? `The latest user message is a direct reply to ${replyTarget.sender === 'persona' ? (replyTarget.personaName || group.memberNameById?.[replyTarget.personaId] || 'a character') : 'the user'}'s message: \"${clipMessage(replyTarget.text, 400)}\".`
-      : 'The latest user message is not a direct reply.';
-    const finalInstruction = `NEXT TURN
-Reason selected: ${selectionReason || 'natural-turn'}.
-${replyInstruction}
-Write only ${persona.name}'s next group-chat message. React to the latest user message and the visible group context. Do not repeat what another member already said.${persona.endInstruction ? `\\nMandatory character instruction: ${persona.endInstruction.trim()}` : ''}`;
+${transcript || 'No earlier group messages.'}
+
+END GROUP TRANSCRIPT`;
+
+    const triggerIndex = transcriptMessages.findIndex(message => message.id === userMessage?.id);
+    const reactionsAfterTrigger = triggerIndex >= 0
+      ? transcriptMessages.slice(triggerIndex + 1).filter(message => message.sender === 'persona')
+      : [];
+    const reactedNames = [...new Set(reactionsAfterTrigger.map(message =>
+      message.personaName || memberNameById[message.personaId] || 'Another character'
+    ))];
+    const targetName = replyTarget?.sender === 'persona'
+      ? replyTarget.personaName || memberNameById[replyTarget.personaId] || 'another character'
+      : null;
+    const replyContext = !replyTarget
+      ? 'HUMAN USER did not use the reply feature.'
+      : replyTarget.sender === 'persona' && replyTarget.personaId === persona.id
+        ? `HUMAN USER directly replied to YOUR earlier message: \"${clipMessage(replyTarget.text, 350)}\". You must answer HUMAN USER.`
+        : replyTarget.sender === 'persona'
+          ? `HUMAN USER directly replied to ${targetName}'s message: \"${clipMessage(replyTarget.text, 350)}\". You are ${persona.name}, not ${targetName}; only chime in as yourself.`
+          : `HUMAN USER replied to their own earlier message: \"${clipMessage(replyTarget.text, 350)}\".`;
+    const routing = selectionReason === 'direct-reply'
+      ? 'HUMAN USER directly addressed YOU through the reply feature.'
+      : selectionReason === 'mentioned'
+        ? `HUMAN USER addressed YOU, ${persona.name}, by name.`
+        : selectionReason === 'topic-relevance'
+          ? `The HUMAN USER's message is relevant to ${persona.name}, so you may chime in as yourself.`
+          : `${persona.name} is taking a natural turn to respond to HUMAN USER.`;
+
+    const isNudge = !!userMessage?.isNudge;
+    const turnPrompt = `CURRENT TRIGGER
+AUTHOR: HUMAN USER
+${isNudge
+  ? 'HUMAN USER sent no text and requested the next natural group-chat turn. Continue from the visible conversation without mentioning this instruction.'
+  : `MESSAGE: \"${clipMessage(userMessage?.text, 600)}\"`}
+
+ROUTING
+${routing}
+${replyContext}
+${reactedNames.length ? `Messages already sent after this trigger by: ${reactedNames.join(', ')}. Do not repeat them and do not treat them as HUMAN USER's request.` : ''}
+
+TASK
+${isNudge
+  ? `Write ${persona.name}'s next natural group-chat message based on the visible transcript. Address HUMAN USER or the group as context requires.`
+  : `Write ${persona.name}'s response to HUMAN USER's current trigger message.`} You are ${persona.name}; do not write what HUMAN USER says and do not answer as ${otherNames.join(' or ') || 'another person'}. Begin immediately with ${persona.name}'s message body.${persona.endInstruction ? `\\nMandatory character instruction: ${persona.endInstruction.trim()}` : ''}`;
 
     return [
       { role: 'system', content: identityPrompt },
-      ...history,
-      { role: 'system', content: finalInstruction }
+      { role: 'system', content: transcriptPrompt },
+      { role: 'user', content: turnPrompt }
     ];
+  }
+
+  function extractSpeakerPrefix(text) {
+    const value = String(text || '');
+    const patterns = [
+      /^\s*\[\s*([^:\]\n]{1,80})\s*:\s*\]\s*/,
+      /^\s*\[\s*([^\]\n:]{1,80})\s*\]\s*:\s*/,
+      /^\s*\*{1,2}\s*([^*:\n]{1,80})\s*:\s*\*{1,2}\s*/,
+      /^\s*["']\s*([^"':\n]{1,80})\s*["']\s*:\s*/,
+      /^\s*([^:\n]{1,80})\s*:\s*/
+    ];
+    for (const pattern of patterns) {
+      const match = value.match(pattern);
+      if (match) return { label: match[1].trim(), length: match[0].length };
+    }
+    return null;
   }
 
   function sanitizeCharacterOutput(output, personaName, memberNames = []) {
@@ -360,18 +430,34 @@ Write only ${persona.name}'s next group-chat message. React to the latest user m
       } catch (error) {}
     }
 
-    const escapedName = String(personaName || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    if (escapedName) {
-      text = text.replace(new RegExp(`^(?:[\"'\\[]?${escapedName}[\"'\\]]?|assistant)\\s*:\\s*`, 'i'), '').trim();
+    const ownLabel = normalizeText(personaName).trim();
+    const blockedLabels = new Set([
+      'you',
+      'user',
+      'human user',
+      'system',
+      'group event',
+      ...memberNames.filter(name => name && name !== personaName).map(name => normalizeText(name).trim())
+    ]);
+    const leadingPrefix = extractSpeakerPrefix(text);
+    if (leadingPrefix) {
+      const label = normalizeText(leadingPrefix.label).trim();
+      if (label === ownLabel || label === 'assistant') {
+        text = text.slice(leadingPrefix.length).trim();
+      } else if (blockedLabels.has(label)) {
+        return '';
+      }
     }
 
-    const otherNames = memberNames.filter(name => name && name !== personaName);
-    if (otherNames.length) {
-      const labels = otherNames.map(name => String(name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
-      const foreignSpeaker = new RegExp(`(?:^|\\n)\\s*(?:[\"'\\[]?(?:${labels})[\"'\\]]?)\\s*:\\s*`, 'i');
-      const match = foreignSpeaker.exec(text);
-      if (match?.index === 0) return '';
-      if (match) text = text.slice(0, match.index).trim();
+    const lines = text.split('\n');
+    for (let index = 1; index < lines.length; index += 1) {
+      const prefix = extractSpeakerPrefix(lines[index]);
+      if (!prefix) continue;
+      const label = normalizeText(prefix.label).trim();
+      if (label === ownLabel || label === 'assistant' || blockedLabels.has(label)) {
+        text = lines.slice(0, index).join('\n').trim();
+        break;
+      }
     }
     return text.slice(0, 4000).trim();
   }
