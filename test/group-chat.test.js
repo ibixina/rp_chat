@@ -130,3 +130,107 @@ test('deleting a group removes its complete persisted state', () => {
   assert.equal(GroupChatCore.getGroup(db, 'friends'), null);
   assert.equal(db.groupMessages.friends, undefined);
 });
+
+test('direct replies always select the addressed character first', () => {
+  const personas = [
+    { id: 'alice', name: 'Alice', description: 'A chef who loves food.' },
+    { id: 'bob', name: 'Bob', description: 'A quiet astronomer.' },
+    { id: 'cara', name: 'Cara', description: 'A musician.' }
+  ];
+  const group = { id: 'friends', name: 'Friends', memberIds: personas.map(persona => persona.id) };
+  const replyTarget = { id: 'old', sender: 'persona', personaId: 'bob', personaName: 'Bob', text: 'Look at the sky.' };
+  const userMessage = { id: 'new', sender: 'user', text: 'What did you see?', replyToId: 'old' };
+
+  const selected = GroupChatCore.selectResponders({
+    group, personas, messages: [replyTarget, userMessage], userMessage, replyTarget
+  });
+
+  assert.equal(selected[0].personaId, 'bob');
+  assert.equal(selected[0].reason, 'direct-reply');
+  assert.ok(selected.length < personas.length);
+});
+
+test('speaker selection is deterministic, relevant, and avoids every-member pile-ons', () => {
+  const personas = [
+    { id: 'alice', name: 'Alice', description: 'A pastry chef who loves bread and baking.' },
+    { id: 'bob', name: 'Bob', description: 'An astronomer fascinated by planets and telescopes.' },
+    { id: 'cara', name: 'Cara', description: 'A violinist who performs classical music.' },
+    { id: 'drew', name: 'Drew', description: 'A marathon runner and fitness coach.' }
+  ];
+  const group = { id: 'friends', name: 'Friends', memberIds: personas.map(persona => persona.id) };
+  const userMessage = { id: 'topic-1', sender: 'user', text: 'I need advice for baking sourdough bread.' };
+  const args = { group, personas, messages: [userMessage], userMessage };
+
+  const first = GroupChatCore.selectResponders(args);
+  const second = GroupChatCore.selectResponders(args);
+
+  assert.deepEqual(first, second);
+  assert.equal(first[0].personaId, 'alice');
+  assert.ok(first.length >= 1 && first.length <= 3);
+  assert.ok(first.length < personas.length);
+});
+
+test('selection penalizes monopolizing the latest turns', () => {
+  const personas = [
+    { id: 'alice', name: 'Alice', description: 'Friendly and curious.' },
+    { id: 'bob', name: 'Bob', description: 'Friendly and curious.' },
+    { id: 'cara', name: 'Cara', description: 'Friendly and curious.' }
+  ];
+  const group = { id: 'friends', name: 'Friends', memberIds: personas.map(persona => persona.id) };
+  const messages = [
+    { id: 'a1', sender: 'persona', personaId: 'alice', text: 'One.' },
+    { id: 'a2', sender: 'persona', personaId: 'alice', text: 'Two.' },
+    { id: 'a3', sender: 'persona', personaId: 'alice', text: 'Three.' }
+  ];
+  const userMessage = { id: 'neutral', sender: 'user', text: 'What do you think?' };
+  messages.push(userMessage);
+
+  const selected = GroupChatCore.selectResponders({ group, personas, messages, userMessage });
+  assert.notEqual(selected[0].personaId, 'alice');
+});
+
+test('character prompts isolate speakers and mark private context as non-public', () => {
+  const persona = {
+    id: 'alice',
+    name: 'Alice',
+    description: 'Dry humor and careful with secrets.',
+    storyMemory: 'Alice privately knows the user is changing jobs.'
+  };
+  const group = {
+    id: 'friends',
+    name: 'Friends',
+    memberIds: ['alice', 'bob'],
+    memberNames: ['Alice', 'Bob'],
+    memberNameById: { alice: 'Alice', bob: 'Bob' }
+  };
+  const userMessage = { id: 'u2', sender: 'user', text: 'Any weekend ideas?' };
+  const prompt = GroupChatCore.buildCharacterPrompt({
+    persona,
+    group,
+    groupMemory: '- Bob proposed hiking.',
+    groupMessages: [
+      { id: 'b1', sender: 'persona', personaId: 'bob', personaName: 'Bob', text: 'We could hike.' },
+      userMessage
+    ],
+    personalMessages: [{ sender: 'user', text: 'My new job is still secret.' }],
+    userMessage,
+    selectionReason: 'topic-relevance'
+  });
+
+  assert.match(prompt[0].content, /Private context is internal/);
+  assert.match(prompt[0].content, /Never write their dialogue/);
+  assert.deepEqual(prompt.slice(1, 3).map(message => message.role), ['user', 'user']);
+  assert.match(prompt.at(-1).content, /Write only Alice/);
+});
+
+test('output sanitation removes wrappers and stops multi-character impersonation', () => {
+  assert.equal(
+    GroupChatCore.sanitizeCharacterOutput('```json\n{"message":"Alice: Sounds good."}\n```', 'Alice', ['Alice', 'Bob']),
+    'Sounds good.'
+  );
+  assert.equal(
+    GroupChatCore.sanitizeCharacterOutput('Alice: I agree.\nBob: Me too.', 'Alice', ['Alice', 'Bob']),
+    'I agree.'
+  );
+  assert.equal(GroupChatCore.sanitizeCharacterOutput('   ', 'Alice', ['Alice']), '');
+});

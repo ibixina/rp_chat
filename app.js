@@ -2044,7 +2044,9 @@ ${recMsgsStr}`;
   // -------------------------------------------------------------
   let personas = [];
   let activePersonaId = null;
+  let activeGroupId = null;
   const generatingPersonas = {};
+  const generatingGroups = {};
   const activeStreamingState = {};
   const memorySummarizingState = {};
   const generationControllers = {};
@@ -4732,6 +4734,137 @@ ${recMsgsStr}`;
         isProgrammaticScroll = false;
       }, 100);
     }
+  }
+
+  async function generateGroupResponses(groupId, userMessageId) {
+    if (generatingGroups[groupId]) return [];
+    const group = LocalDB.getGroup(groupId);
+    const userMessage = LocalDB.getGroupMessages(groupId).find(message => message.id === userMessageId);
+    if (!group || !userMessage || userMessage.sender !== 'user') return [];
+
+    const controller = new AbortController();
+    generatingGroups[groupId] = true;
+    generationControllers[`group:${groupId}`] = controller;
+    LocalDB.updateGroupMessage(groupId, userMessageId, { isRead: true });
+
+    const replyTarget = userMessage.replyToId
+      ? LocalDB.getGroupMessages(groupId).find(message => message.id === userMessage.replyToId) || null
+      : null;
+    const groupPersonas = group.memberIds.map(personaId => LocalDB.getPersona(personaId)).filter(Boolean);
+    const personalMessages = Object.fromEntries(
+      groupPersonas.map(persona => [persona.id, LocalDB.getMessages(persona.id)])
+    );
+    const selected = GroupChatCore.selectResponders({
+      group,
+      personas: groupPersonas,
+      messages: LocalDB.getGroupMessages(groupId),
+      userMessage,
+      replyTarget,
+      personalMessages
+    });
+    const responses = [];
+    const errors = [];
+
+    if (activeGroupId === groupId) {
+      currentStatusEl.textContent = selected.length
+        ? `${groupPersonas.find(persona => persona.id === selected[0].personaId)?.name || 'Someone'} is typing...`
+        : 'online';
+      currentStatusEl.className = 'status-subtitle typing';
+      showTypingIndicator();
+      updateGenerationControls(`group:${groupId}`);
+    }
+
+    try {
+      for (const selection of selected) {
+        if (controller.signal.aborted) break;
+        const persona = LocalDB.getPersona(selection.personaId);
+        const currentGroup = LocalDB.getGroup(groupId);
+        if (!persona || !currentGroup?.memberIds.includes(persona.id)) continue;
+
+        if (activeGroupId === groupId) {
+          currentStatusEl.textContent = `${persona.name} is typing...`;
+        }
+
+        const memberNameById = Object.fromEntries(
+          currentGroup.memberIds.map(memberId => [memberId, LocalDB.getPersona(memberId)?.name || 'Former member'])
+        );
+        const promptGroup = {
+          ...currentGroup,
+          memberNameById,
+          memberNames: Object.values(memberNameById)
+        };
+        const liveMessages = LocalDB.getGroupMessages(groupId).map(message => ({
+          ...message,
+          personaName: message.personaId ? memberNameById[message.personaId] : null
+        }));
+        const promptMessages = GroupChatCore.buildCharacterPrompt({
+          persona,
+          group: promptGroup,
+          groupMemory: currentGroup.groupMemory,
+          groupMessages: liveMessages,
+          personalMessages: personalMessages[persona.id],
+          userMessage,
+          replyTarget: replyTarget ? {
+            ...replyTarget,
+            personaName: replyTarget.personaId ? memberNameById[replyTarget.personaId] : null
+          } : null,
+          selectionReason: selection.reason
+        });
+
+        try {
+          const settings = LocalDB.getSettings();
+          const rawText = await streamAiCompletion(promptMessages, {
+            ...settings,
+            maxTokens: Math.min(parseInt(settings.groupMaxTokens, 10) || 450, 700)
+          }, null, false, {
+            threadId: `${window.location.origin}|group:${groupId}:${persona.id}`,
+            messageId: userMessageId,
+            memory: `${persona.storyMemory || ''}\n\n${currentGroup.groupMemory || ''}`,
+            instructionRevision: JSON.stringify([
+              currentGroup.name,
+              currentGroup.memberIds,
+              persona.name,
+              persona.description || '',
+              persona.systemPrompt || ''
+            ]),
+            mode: 'group-chat'
+          }, controller.signal);
+          const text = GroupChatCore.sanitizeCharacterOutput(rawText, persona.name, promptGroup.memberNames);
+          if (!text) throw new Error(`${persona.name} returned no usable in-character message.`);
+
+          const response = {
+            id: `gmsg-${Date.now()}-${persona.id}`,
+            sender: 'persona',
+            personaId: persona.id,
+            text,
+            timestamp: new Date().toISOString(),
+            respondingToId: userMessageId,
+            ...(selection.reason === 'direct-reply' ? { replyToId: userMessageId } : {})
+          };
+          LocalDB.addGroupMessage(groupId, response);
+          responses.push(response);
+          if (activeGroupId === groupId) renderGroupChatFeed(groupId);
+        } catch (error) {
+          if (error?.name === 'AbortError') break;
+          errors.push({ personaId: persona.id, message: error.message || String(error) });
+          logEvent('GROUP_CHAT', `${persona.name} response skipped: ${error.message || error}`);
+        }
+      }
+    } finally {
+      generatingGroups[groupId] = false;
+      delete generationControllers[`group:${groupId}`];
+      removeTypingIndicator();
+      if (activeGroupId === groupId) {
+        updateGroupHeaderStatus(groupId);
+        updateGenerationControls(`group:${groupId}`);
+        renderGroupChatFeed(groupId);
+        if (errors.length && !responses.length) {
+          showToast(errors[0].message, 'error');
+        }
+      }
+      renderContactList();
+    }
+    return responses;
   }
   async function retryMessage(msgId, customInstruction = '') {
     const targetPersonaId = activePersonaId;
