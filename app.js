@@ -4227,6 +4227,7 @@ ${recMsgsStr}`;
     currentGroupAvatarEl?.classList.add('hidden');
     currentAvatarEl.src = persona.avatarUrl || './uploads/default-avatar.svg';
     currentAvatarEl.onerror = () => { currentAvatarEl.src = './uploads/default-avatar.svg'; };
+    currentNameEl.textContent = persona.name;
     clearCurrentGroupAvatar();
     document.getElementById('header-online-badge')?.classList.remove('hidden');
     btnEditPersona.title = 'Edit Contact Details';
