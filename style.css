@@ -1022,7 +1022,16 @@ body, html {
   position: relative;
 }
 
-.message-bubble:hover .message-actions-toolbar {
+.message-bubble:focus-within {
+  z-index: 30;
+}
+
+.message-bubble:hover {
+  z-index: 31;
+}
+
+.message-bubble:hover .message-actions-toolbar,
+.message-bubble:focus-within .message-actions-toolbar {
   opacity: 1;
   visibility: visible;
   transform: translateY(0);
@@ -1052,10 +1061,6 @@ body, html {
 
 .message-bubble.persona .message-actions-toolbar {
   left: 4px;
-}
-
-.message-bubble.toolbar-below {
-  z-index: 30;
 }
 
 .message-bubble.toolbar-below .message-actions-toolbar {
@@ -1474,7 +1479,7 @@ body, html {
 /* ------------------------------------------------------------- */
 .toast-container {
   position: fixed;
-  bottom: 28px;
+  bottom: calc(80px + env(safe-area-inset-bottom));
   left: 50%;
   transform: translateX(-50%);
   z-index: 9999;
@@ -1483,7 +1488,7 @@ body, html {
   gap: 10px;
   width: max-content;
   max-width: min(560px, calc(100vw - 32px));
-  max-height: calc(100vh - 56px);
+  max-height: calc(100dvh - 108px - env(safe-area-inset-bottom));
   overflow-y: auto;
   pointer-events: none;
 }

@@ -378,6 +378,40 @@ test('regeneration without a mounted bubble still retains message identity on su
   assert.equal(fixture.messages.at(-1).text, 'Replacement');
 });
 
+test('stopping regeneration before the first chunk immediately restores the last saved message', async () => {
+  for (const count of [1, 2, 30, 31, 90]) {
+    for (const isError of [false, true]) {
+      const fixture = chatFixture();
+      fixture.setMessages(fixture.messages.slice(0, count));
+      const last = fixture.messages.at(-1);
+      if (isError) last.isError = true;
+      fixture.chat.renderChatFeed('persona');
+      const original = JSON.stringify(fixture.messages);
+      const generation = fixture.chat.retryMessage(last.id);
+      fixture.chat.stop();
+      await generation;
+      assert.equal(JSON.stringify(fixture.messages), original);
+      assert.equal(fixture.feed.children.find(bubble => bubble.id === last.id)?.text, last.text);
+      assert.equal(fixture.chat.state().displayedMessageCount, Math.min(30, count));
+      assert.equal(fixture.streaming.persona, undefined);
+      assert.equal(fixture.pendingFrames, 0);
+    }
+  }
+});
+
+test('cancellation wins when regeneration completion is queued but has not been committed', async () => {
+  const fixture = chatFixture();
+  const original = JSON.stringify(fixture.messages);
+  const generation = fixture.chat.retryMessage('message-89');
+  fixture.stream.push('Replacement');
+  fixture.stream.finish();
+  fixture.chat.stop();
+  await generation;
+  assert.equal(JSON.stringify(fixture.messages), original);
+  assert.equal(fixture.feed.children.at(-1).text, 'Message 89');
+  assert.equal(fixture.writes.length, 0);
+});
+
 test('regeneration failure after leaving the chat preserves its saved conversation', async () => {
   const fixture = chatFixture();
   const original = JSON.stringify(fixture.messages);

@@ -3933,7 +3933,6 @@ ${recMsgsStr}`;
   // Retry Modal Handlers
   // -------------------------------------------------------------
   let pendingRetryMsgId = null;
-  let isPendingErrorRetry = false;
   let pendingRetryGroupId = null;
 
   const retryModalEl = document.getElementById('retry-instruction-modal');
@@ -3942,13 +3941,12 @@ ${recMsgsStr}`;
   const btnCancelRetryModal = document.getElementById('btn-cancel-retry-modal');
   const btnConfirmRetry = document.getElementById('btn-confirm-retry');
 
-  function openRetryModal(msgId, isErrorRetry = false, existingInstruction = '') {
+  function openRetryModal(msgId, existingInstruction = '') {
     pendingRetryMsgId = msgId;
-    isPendingErrorRetry = isErrorRetry;
 
     pendingRetryGroupId = activeGroupId;
     let instructionToUse = existingInstruction || '';
-    if (!instructionToUse && msgId && !isErrorRetry) {
+    if (!instructionToUse && msgId) {
       const targetMsg = activeGroupId
         ? LocalDB.getGroupMessages(activeGroupId).find(message => message.id === msgId)
         : LocalDB.getMessages(activePersonaId).find(message => message.id === msgId);
@@ -3969,7 +3967,6 @@ ${recMsgsStr}`;
 
   function closeRetryModal() {
     pendingRetryMsgId = null;
-    isPendingErrorRetry = false;
     pendingRetryGroupId = null;
     if (retryInputEl) retryInputEl.value = '';
     if (retryModalEl) hideModal(retryModalEl);
@@ -3981,7 +3978,6 @@ ${recMsgsStr}`;
   if (btnConfirmRetry) {
     btnConfirmRetry.addEventListener('click', () => {
       const msgId = pendingRetryMsgId;
-      const isErr = isPendingErrorRetry;
       const retryGroupId = pendingRetryGroupId;
       const instruction = retryInputEl ? retryInputEl.value.trim() : '';
       closeRetryModal();
@@ -3989,20 +3985,7 @@ ${recMsgsStr}`;
         retryGroupMessage(retryGroupId, msgId, instruction);
         return;
       }
-      if (isErr) {
-        if (msgId && msgId !== activePersonaId) {
-          LocalDB.deleteMessage(activePersonaId, msgId);
-        }
-        const msgs = LocalDB.getMessages(activePersonaId);
-        if (msgs && msgs.length > 0) {
-          const lastMsg = msgs[msgs.length - 1];
-          if (lastMsg && (lastMsg.isError || (lastMsg.id && lastMsg.id.startsWith('err-')))) {
-            LocalDB.deleteMessage(activePersonaId, lastMsg.id);
-          }
-        }
-        renderCurrentMessageBatch();
-        generatePersonaResponse(activePersonaId, null, instruction);
-      } else if (msgId) {
+      if (msgId) {
         retryMessage(msgId, instruction);
       }
     });
@@ -4799,16 +4782,11 @@ ${recMsgsStr}`;
     if (errorRetryBtn) {
       errorRetryBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        if (msg.id) {
-          LocalDB.deleteMessage(activePersonaId, msg.id);
-        }
-        bubble.remove();
-        renderCurrentMessageBatch();
         const existingInstruction = msg.retryInstruction || '';
         if (e.shiftKey || e.ctrlKey) {
-          generatePersonaResponse(activePersonaId, null, existingInstruction);
+          retryMessage(msg.id, existingInstruction);
         } else {
-          openRetryModal(activePersonaId, true, existingInstruction);
+          openRetryModal(msg.id, existingInstruction);
         }
       });
     }
@@ -4859,11 +4837,11 @@ ${recMsgsStr}`;
         const existingInstruction = msg.retryInstruction || '';
         if (inGroup) {
           if (e.shiftKey || e.ctrlKey) retryGroupMessage(activeGroupId, msg.id, existingInstruction);
-          else openRetryModal(msg.id, false, existingInstruction);
+          else openRetryModal(msg.id, existingInstruction);
         } else if (e.shiftKey || e.ctrlKey) {
           retryMessage(msg.id, existingInstruction);
         } else {
-          openRetryModal(msg.id, false, existingInstruction);
+          openRetryModal(msg.id, existingInstruction);
         }
       });
     }
@@ -5335,6 +5313,7 @@ ${recMsgsStr}`;
         instructionRevision: JSON.stringify([persona.name || '', persona.description || '', persona.systemPrompt || '']),
         mode: 'chat'
       }, controller.signal);
+      controller.signal.throwIfAborted();
       if (!assistantText.trim()) throw new Error('AI model returned an empty response.');
 
       const finalAssistantMsg = {
