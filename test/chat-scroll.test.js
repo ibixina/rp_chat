@@ -19,6 +19,14 @@ const retrySource = source.slice(
   source.indexOf('  async function retryMessage('),
   source.indexOf('  function restoreRetryBackupsOnLoad(')
 );
+const recoverySource = source.slice(
+  source.indexOf('  function restoreRetryBackupsOnLoad('),
+  source.indexOf('  async function generateResponseForUserMessage(')
+);
+const userGenerationSource = source.slice(
+  source.indexOf('  async function generateResponseForUserMessage('),
+  source.indexOf('  async function continuePersonaMessage(')
+);
 
 function chatFixture() {
   const listeners = new Map();
@@ -73,6 +81,10 @@ function chatFixture() {
     return child;
   }
   const streaming = {};
+  const values = new Map();
+  const toasts = [];
+  const promptHistories = [];
+  const writes = [];
   let stream;
   let formats = 0;
   const context = vm.createContext({
@@ -80,13 +92,26 @@ function chatFixture() {
     activeStreamingState: streaming, generatingPersonas: {}, generatingGroups: {},
     generationControllers: {}, AbortController, MEMORY_AUTO_SYNC_INTERVAL: 12,
     window: { location: { origin: 'http://localhost' } },
-    currentStatusEl: {}, localStorage: { setItem() {}, removeItem() {} },
+    currentStatusEl: {}, console: { error() {} },
+    localStorage: {
+      setItem: (key, value) => values.set(key, value), getItem: key => values.get(key),
+      removeItem: key => values.delete(key), key: index => [...values.keys()][index],
+      get length() { return values.size; }
+    },
     updateGenerationControls() {}, updateHeaderStatus() {}, renderContactList() {}, logEvent() {},
-    preparePromptMessages: () => [], formatMessageText(text) { formats++; return text; }, escapeHtml: text => text,
+    showToast: (message, type) => toasts.push({ message, type }),
+    preparePromptMessages(persona, history) {
+      promptHistories.push({ memory: persona.storyMemory, ids: Array.from(history, message => message.id) });
+      return [];
+    },
+    formatMessageText(text) { formats++; return text; }, escapeHtml: text => text,
     LocalDB: {
-      getMessages: () => messages, setMessages: (id, updated) => { messages = updated; },
+      getMessages: () => messages,
+      setMessages(id, updated) { messages = updated; writes.push(structuredClone(messages)); },
       getPersona: () => ({}), getPersonas: () => [], getSettings: () => ({}),
-      addMessage: (id, message) => messages.push(message),
+      getEffectiveMemory: (id, history) => Array.from(history).reverse().find(message => message.memorySnapshot)?.memorySnapshot || '',
+      addMessage(id, message) { messages.push(message); writes.push(structuredClone(messages)); },
+      deleteMessage(id, messageId) { messages = messages.filter(message => message.id !== messageId); },
       updateMessage(id, messageId, updates) { Object.assign(messages.find(msg => msg.id === messageId), updates); }
     },
     document: {
@@ -103,25 +128,32 @@ function chatFixture() {
     },
     showTypingIndicator() { feed.appendChild(element('typing-indicator-bubble', 25)); },
     removeTypingIndicator() { feed.children.find(child => child.id === 'typing-indicator-bubble')?.remove(); },
-    streamAiCompletion(prompt, settings, onChunk) {
-      return new Promise(resolve => {
+    streamAiCompletion(prompt, settings, onChunk, isRetry, bridge, signal) {
+      return new Promise((resolve, reject) => {
         let text = '';
-        stream = { push(chunk) { text += chunk; onChunk(chunk); }, finish() { resolve(text); } };
+        stream = {
+          push(chunk) { text += chunk; onChunk(chunk); }, finish() { resolve(text); },
+          fail(error = new Error('Provider unavailable')) { reject(error); }
+        };
+        signal.addEventListener('abort', () => reject(Object.assign(new Error('Stopped'), { name: 'AbortError' })), { once: true });
       });
     },
     requestAnimationFrame(callback) { frames.set(++frameId, callback); return frameId; },
     cancelAnimationFrame: id => frames.delete(id),
     setTimeout: callback => timers.push(callback)
   });
-  vm.runInContext(`${scrollSource}${generationSource}${retrySource}\nthis.chat = {
+  vm.runInContext(`${scrollSource}${generationSource}${retrySource}${recoverySource}${userGenerationSource}\nthis.chat = {
     renderChatFeed, renderCurrentMessageBatch, loadOlderMessages,
-    scrollToBottom, scrollToBottomIfNearBottom, retryMessage,
+    scrollToBottom, scrollToBottomIfNearBottom, retryMessage, generatePersonaResponse, generateResponseForUserMessage, restoreRetryBackupsOnLoad,
+    stop: () => generationControllers.persona.abort(),
+    setActivePersona: id => { activePersonaId = id; },
     state: () => ({ userScrolledUp, displayedMessageCount })
   };`, context);
   context.chat.renderChatFeed('persona');
   return {
-    feed, streaming, chat: context.chat,
+    feed, streaming, values, toasts, promptHistories, writes, chat: context.chat,
     get messages() { return messages; }, get stream() { return stream; },
+    setMessages(updated) { context.LocalDB.setMessages('persona', updated); },
     get pendingFrames() { return frames.size; }, get formats() { return formats; },
     dispatch(name, event = {}) { listeners.get(name)(event); },
     flushFrames() {
@@ -276,4 +308,187 @@ test('loading older messages inserts only the new batch and keeps existing bubbl
   assert.ok(existing.every(bubble => fixture.feed.contains(bubble)));
   assert.equal(fixture.feed.querySelectorAll().length, existing.length + 30);
   assert.equal(fixture.chat.state().displayedMessageCount, 60);
+});
+
+for (const outcome of ['error before streaming', 'error after streaming', 'cancel', 'empty response']) {
+  test(`regeneration preserves the original conversation on ${outcome}`, async () => {
+    const fixture = chatFixture();
+    fixture.messages[85].memorySnapshot = 'Original memory';
+    fixture.messages[86].reactions = ['❤️'];
+    const original = JSON.stringify(fixture.messages);
+    fixture.feed.scrollTop -= 450;
+    fixture.dispatch('scroll');
+    const anchorId = fixture.firstVisible().id;
+    const offset = fixture.firstVisible().getBoundingClientRect().top;
+    const generation = fixture.chat.retryMessage('message-85', 'A different response');
+    assert.equal(JSON.stringify(fixture.messages), original);
+    assert.equal(fixture.writes.length, 0);
+    if (outcome === 'error after streaming' || outcome === 'cancel') {
+      fixture.stream.push('Incomplete replacement');
+      fixture.flushFrames();
+    }
+    fixture.chat.loadOlderMessages();
+    assert.equal(JSON.stringify(fixture.messages), original);
+    if (outcome === 'cancel') fixture.chat.stop();
+    else if (outcome === 'empty response') fixture.stream.finish();
+    else fixture.stream.fail();
+    await generation;
+    assert.equal(JSON.stringify(fixture.messages), original);
+    assert.equal(fixture.writes.length, 0);
+    assert.equal(fixture.feed.children.find(bubble => bubble.id === 'message-85').text, 'Message 85');
+    assert.ok(fixture.messages.slice(86).every(message => fixture.feed.children.some(bubble => bubble.id === message.id)));
+    assert.equal(fixture.feed.querySelectorAll().length, 60);
+    assert.equal(fixture.chat.state().displayedMessageCount, 60);
+    assert.equal(fixture.firstVisible().id, anchorId);
+    assert.equal(fixture.firstVisible().getBoundingClientRect().top, offset);
+    assert.equal(fixture.pendingFrames, 0);
+    assert.equal(fixture.streaming.persona, undefined);
+    assert.equal(fixture.toasts.length, outcome === 'cancel' ? 0 : 1);
+  });
+}
+
+test('regeneration commits only the completed replacement and uses history and memory before the target', async () => {
+  const fixture = chatFixture();
+  fixture.messages[80].memorySnapshot = 'Memory before target';
+  fixture.messages[88].memorySnapshot = 'Future memory';
+  const original = JSON.stringify(fixture.messages);
+  const generation = fixture.chat.retryMessage('message-85', 'Custom instruction');
+  assert.equal(JSON.stringify(fixture.messages), original);
+  assert.deepEqual(fixture.promptHistories[0].ids, fixture.messages.slice(0, 85).map(message => message.id));
+  assert.equal(fixture.promptHistories[0].memory, 'Memory before target');
+  fixture.stream.push('Completed replacement');
+  fixture.stream.finish();
+  await generation;
+  assert.equal(fixture.messages.length, 86);
+  assert.equal(fixture.messages.at(-1).id, 'message-85');
+  assert.equal(fixture.messages.at(-1).text, 'Completed replacement');
+  assert.equal(fixture.messages.at(-1).retryInstruction, 'Custom instruction');
+  assert.equal(fixture.writes.length, 1);
+  assert.equal(fixture.toasts.length, 0);
+});
+
+test('regeneration without a mounted bubble still retains message identity on success', async () => {
+  const fixture = chatFixture();
+  fixture.feed.children.find(bubble => bubble.id === 'message-85').remove();
+  const generation = fixture.chat.retryMessage('message-85');
+  fixture.stream.push('Replacement');
+  fixture.stream.finish();
+  await generation;
+  assert.equal(fixture.messages.at(-1).id, 'message-85');
+  assert.equal(fixture.messages.at(-1).text, 'Replacement');
+});
+
+test('regeneration failure after leaving the chat preserves its saved conversation', async () => {
+  const fixture = chatFixture();
+  const original = JSON.stringify(fixture.messages);
+  const generation = fixture.chat.retryMessage('message-85');
+  fixture.chat.setActivePersona(null);
+  fixture.feed.children = [];
+  fixture.stream.fail();
+  await generation;
+  assert.equal(JSON.stringify(fixture.messages), original);
+  assert.equal(fixture.feed.children.length, 0);
+  fixture.chat.setActivePersona('persona');
+  fixture.chat.renderChatFeed('persona');
+  assert.equal(fixture.feed.children.find(bubble => bubble.id === 'message-85').text, 'Message 85');
+});
+
+test('normal generation still saves an error message or a cancelled partial response', async () => {
+  for (const cancelled of [false, true]) {
+    const fixture = chatFixture();
+    const generation = fixture.chat.generatePersonaResponse('persona');
+    fixture.stream.push('Partial response');
+    if (cancelled) fixture.chat.stop();
+    else fixture.stream.fail();
+    await generation;
+    assert.equal(fixture.messages.length, 91);
+    assert.equal(fixture.messages.at(-1).isError, cancelled ? undefined : true);
+    if (cancelled) assert.equal(fixture.messages.at(-1).text, 'Partial response');
+  }
+});
+
+test('legacy retry recovery restores the original and trailing messages instead of accepting an error', () => {
+  const fixture = chatFixture();
+  const original = JSON.stringify(fixture.messages);
+  fixture.values.set('retry_backup_persona', JSON.stringify({
+    personaId: 'persona', originalMsg: fixture.messages[85], trailing: fixture.messages.slice(86)
+  }));
+  fixture.setMessages([...fixture.messages.slice(0, 85), {
+    id: 'err-retry', sender: 'persona', text: 'Provider error', isError: true,
+    timestamp: new Date().toISOString()
+  }]);
+  fixture.chat.restoreRetryBackupsOnLoad();
+  assert.equal(JSON.stringify(fixture.messages), original);
+  assert.equal(fixture.values.size, 0);
+});
+
+test('legacy retry recovery leaves a successful replacement and an already restored conversation intact', () => {
+  for (const completed of [false, true]) {
+    const fixture = chatFixture();
+    fixture.values.set('retry_backup_persona', JSON.stringify({
+      personaId: 'persona', originalMsg: fixture.messages[85], trailing: fixture.messages.slice(86)
+    }));
+    if (completed) fixture.setMessages([...fixture.messages.slice(0, 85), {
+      ...fixture.messages[85], text: 'Completed replacement', timestamp: new Date().toISOString()
+    }]);
+    const current = JSON.stringify(fixture.messages);
+    fixture.chat.restoreRetryBackupsOnLoad();
+    assert.equal(JSON.stringify(fixture.messages), current);
+    assert.equal(fixture.values.size, 0);
+  }
+});
+
+test('generating from an older user message also keeps its original replies on failure', async () => {
+  const fixture = chatFixture();
+  fixture.messages[84].sender = 'user';
+  fixture.messages[84].isRead = true;
+  const original = JSON.stringify(fixture.messages);
+  const generation = fixture.chat.generateResponseForUserMessage('message-84');
+  fixture.stream.push('Incomplete replacement');
+  fixture.flushFrames();
+  assert.equal(JSON.stringify(fixture.messages), original);
+  fixture.stream.fail();
+  await generation;
+  assert.equal(JSON.stringify(fixture.messages), original);
+  assert.equal(fixture.writes.length, 0);
+  assert.equal(fixture.feed.children.find(bubble => bubble.id === 'message-85').text, 'Message 85');
+});
+
+test('generating from an older user message commits a successful replacement with the original response id', async () => {
+  const fixture = chatFixture();
+  fixture.messages[84].sender = 'user';
+  fixture.messages[84].isRead = true;
+  const generation = fixture.chat.generateResponseForUserMessage('message-84');
+  fixture.stream.push('Replacement');
+  fixture.stream.finish();
+  await generation;
+  assert.equal(fixture.messages.length, 86);
+  assert.equal(fixture.messages.at(-1).id, 'message-85');
+  assert.equal(fixture.messages.at(-1).text, 'Replacement');
+  assert.equal(fixture.writes.length, 1);
+});
+
+test('generating from a user message with no reply creates a new response', async () => {
+  const fixture = chatFixture();
+  fixture.messages.at(-1).sender = 'user';
+  fixture.messages.at(-1).isRead = true;
+  const generation = fixture.chat.generateResponseForUserMessage('message-89');
+  fixture.stream.push('New response');
+  fixture.stream.finish();
+  await generation;
+  assert.equal(fixture.messages.length, 91);
+  assert.notEqual(fixture.messages.at(-1).id, 'message-89');
+  assert.equal(fixture.messages.at(-1).text, 'New response');
+});
+
+test('regeneration and normal generation display the complete provider reason', async () => {
+  const message = 'Provider returned error\nMaximum context is 8192 tokens; requested 9000.\n(Test Provider, 400)';
+  for (const regenerate of [false, true]) {
+    const fixture = chatFixture();
+    const generation = regenerate ? fixture.chat.retryMessage('message-89') : fixture.chat.generatePersonaResponse('persona');
+    fixture.stream.fail(new Error(message));
+    await generation;
+    const displayed = regenerate ? fixture.toasts.at(-1).message : fixture.messages.at(-1).text;
+    assert.ok(displayed.includes(message));
+  }
 });

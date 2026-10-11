@@ -1481,6 +1481,10 @@ body, html {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  width: max-content;
+  max-width: min(560px, calc(100vw - 32px));
+  max-height: calc(100vh - 56px);
+  overflow-y: auto;
   pointer-events: none;
 }
 
@@ -1499,6 +1503,24 @@ body, html {
   animation: toastSlideUp 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
   pointer-events: auto;
   backdrop-filter: blur(8px);
+  flex-shrink: 0;
+}
+
+.toast > span {
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.toast-dismiss {
+  align-self: flex-start;
+  flex-shrink: 0;
+  border: 0;
+  padding: 0 4px;
+  color: inherit;
+  background: none;
+  font-size: 20px;
+  cursor: pointer;
 }
 
 .toast.toast-error {

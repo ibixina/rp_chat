@@ -583,9 +583,9 @@ document.addEventListener('DOMContentLoaded', () => {
       return clean;
     },
 
-    getEffectiveMemory(personaId) {
+    getEffectiveMemory(personaId, messages = null) {
       const raw = this.getRaw();
-      const msgs = (raw.messages || {})[personaId] || [];
+      const msgs = messages || (raw.messages || {})[personaId] || [];
       for (let i = msgs.length - 1; i >= 0; i--) {
         if (msgs[i].memorySnapshot) {
           return msgs[i].memorySnapshot;
@@ -716,9 +716,15 @@ document.addEventListener('DOMContentLoaded', () => {
     if (type === 'error') icon = 'fa-circle-xmark';
     if (type === 'info') icon = 'fa-circle-info';
 
-    toast.innerHTML = `<i class="fa-solid ${icon}"></i> <span>${message}</span>`;
+    toast.innerHTML = `<i class="fa-solid ${icon}"></i> <span></span>${type === 'error' ? '<button type="button" class="toast-dismiss" aria-label="Dismiss error">&times;</button>' : ''}`;
+    toast.querySelector('span').textContent = message;
+    toast.setAttribute('role', type === 'error' ? 'alert' : 'status');
     container.appendChild(toast);
 
+    if (type === 'error') {
+      toast.querySelector('.toast-dismiss').addEventListener('click', () => toast.remove());
+      return;
+    }
     setTimeout(() => {
       toast.style.opacity = '0';
       toast.style.transform = 'translateY(10px)';
@@ -1842,21 +1848,46 @@ ${persona.storyMemory || "No prior narrative memory recorded."}
 
     if (!response.ok) {
       const errText = await response.text();
-      let msg = `API Error ${response.status}`;
-      try {
-        const errJson = JSON.parse(errText);
-        msg = errJson.error?.message || errJson.message || msg;
-      } catch (e) {
-        msg = errText || msg;
-      }
+      const reason = ProviderErrors.describe(errText, response.statusText || 'The request failed.');
+      const msg = `API Error ${response.status}: ${reason}`;
       logEvent('AI_INFERENCE', `API Error Response: ${msg}`, { status: response.status });
       throw new Error(msg);
+    }
+
+    if (response.headers.get('content-type')?.includes('application/json')) {
+      const result = await response.json();
+      if (result?.error || result?.detail || result?.errors) throw new Error(ProviderErrors.describe(result));
+      const text = result?.choices?.[0]?.message?.content || result?.choices?.[0]?.text || '';
+      if (!text.trim()) throw new Error(ProviderErrors.describe(result, 'AI model returned an empty (0 character) response.'));
+      if (onChunk) onChunk(text);
+      return text;
     }
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder('utf-8');
     let buffer = '';
     let fullText = '';
+
+    function consumeStreamLine(line) {
+      const trimmed = line.trim();
+      if (!trimmed.startsWith('data: ')) return;
+      const dataStr = trimmed.slice(6);
+      if (dataStr === '[DONE]') return;
+      let parsed;
+      try {
+        parsed = JSON.parse(dataStr);
+      } catch (e) {
+        return;
+      }
+      if (parsed?.error || parsed?.choices?.some(choice => choice.finish_reason === 'error')) {
+        throw new Error(ProviderErrors.describe(parsed));
+      }
+      const chunk = parsed?.choices?.[0]?.delta?.content || parsed?.choices?.[0]?.text || parsed?.choices?.[0]?.message?.content || '';
+      if (chunk) {
+        fullText += chunk;
+        if (onChunk) onChunk(chunk);
+      }
+    }
 
     while (true) {
       const { done, value } = await reader.read();
@@ -1866,48 +1897,10 @@ ${persona.storyMemory || "No prior narrative memory recorded."}
       const lines = buffer.split('\n');
       buffer = lines.pop();
 
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed || !trimmed.startsWith('data: ')) continue;
-        const dataStr = trimmed.slice(6);
-        if (dataStr === '[DONE]') continue;
-
-        try {
-          const parsed = JSON.parse(dataStr);
-          if (parsed.error) {
-            const streamErrMsg = parsed.error.message || (typeof parsed.error === 'string' ? parsed.error : 'Provider returned error');
-            throw new Error(streamErrMsg);
-          }
-          const chunk = parsed.choices?.[0]?.delta?.content || parsed.choices?.[0]?.text || parsed.choices?.[0]?.message?.content || '';
-          if (chunk) {
-            fullText += chunk;
-            if (onChunk) onChunk(chunk);
-          }
-        } catch (e) {
-          if (e.message && !e.message.includes('JSON') && e.message !== 'Unexpected token') {
-            throw e;
-          }
-          // ignore stream chunk parse errors
-        }
-      }
+      for (const line of lines) consumeStreamLine(line);
     }
 
-    if (buffer.trim()) {
-      const trimmed = buffer.trim();
-      if (trimmed.startsWith('data: ')) {
-        const dataStr = trimmed.slice(6);
-        if (dataStr !== '[DONE]') {
-          try {
-            const parsed = JSON.parse(dataStr);
-            const chunk = parsed.choices?.[0]?.delta?.content || parsed.choices?.[0]?.text || parsed.choices?.[0]?.message?.content || '';
-            if (chunk) {
-              fullText += chunk;
-              if (onChunk) onChunk(chunk);
-            }
-          } catch (e) {}
-        }
-      }
-    }
+    consumeStreamLine(buffer + decoder.decode());
 
     if (!fullText || !fullText.trim()) {
       logEvent('AI_INFERENCE', `Warning: Provider returned 0 characters${isRetry ? ' (after auto-retry)' : ''}`, { provider, model });
@@ -4351,8 +4344,17 @@ ${recMsgsStr}`;
   let activeMessagesList = [];
   let displayedMessageCount = 30;
 
+  function getActiveChatMessages() {
+    if (activeGroupId) return LocalDB.getGroupMessages(activeGroupId) || [];
+    if (activePersonaId) {
+      return activeStreamingState[activePersonaId]?.retryContext?.messages
+        || LocalDB.getMessages(activePersonaId) || [];
+    }
+    return [];
+  }
+
   function renderChatFeed(personaId) {
-    activeMessagesList = LocalDB.getMessages(personaId) || [];
+    activeMessagesList = getActiveChatMessages();
     displayedMessageCount = Math.min(MESSAGE_BATCH_SIZE, activeMessagesList.length);
     userScrolledUp = false;
     renderCurrentMessageBatch();
@@ -4369,11 +4371,7 @@ ${recMsgsStr}`;
   }
 
   function renderCurrentMessageBatch(keepScrollPosition = false) {
-    if (activeGroupId) {
-      activeMessagesList = LocalDB.getGroupMessages(activeGroupId) || [];
-    } else if (activePersonaId) {
-      activeMessagesList = LocalDB.getMessages(activePersonaId) || [];
-    }
+    activeMessagesList = getActiveChatMessages();
 
     updateChatScrollIntent();
     const wasNearBottom = !userScrolledUp;
@@ -4447,11 +4445,7 @@ ${recMsgsStr}`;
   }
 
   function loadOlderMessages() {
-    if (activeGroupId) {
-      activeMessagesList = LocalDB.getGroupMessages(activeGroupId) || [];
-    } else if (activePersonaId) {
-      activeMessagesList = LocalDB.getMessages(activePersonaId) || [];
-    }
+    activeMessagesList = getActiveChatMessages();
     if (displayedMessageCount >= activeMessagesList.length) return;
     const oldStart = Math.max(0, activeMessagesList.length - displayedMessageCount);
     const oldScrollHeight = chatFeedEl.scrollHeight;
@@ -4512,11 +4506,7 @@ ${recMsgsStr}`;
   if (chatFeedEl) {
     chatFeedEl.addEventListener('scroll', () => {
       updateChatScrollIntent();
-      if (activeGroupId) {
-        activeMessagesList = LocalDB.getGroupMessages(activeGroupId) || [];
-      } else if (activePersonaId) {
-        activeMessagesList = LocalDB.getMessages(activePersonaId) || [];
-      }
+      activeMessagesList = getActiveChatMessages();
       if (userScrolledUp && chatFeedEl.scrollTop <= 60 && displayedMessageCount < activeMessagesList.length) {
         if (!isScrollLoading) {
           isScrollLoading = true;
@@ -5246,15 +5236,18 @@ ${recMsgsStr}`;
     await generatePersonaResponse(targetPersonaId);
   }
 
-  async function generatePersonaResponse(personaId, overridePromptMessages = null, customInstruction = '', retiringBubble = null, oldRawText = '') {
+  async function generatePersonaResponse(personaId, overridePromptMessages = null, customInstruction = '', retiringBubble = null, oldRawText = '', retryContext = null) {
     if (generatingPersonas[personaId]) return;
     generatingPersonas[personaId] = true;
 
-    const persona = LocalDB.getPersona(personaId);
-    if (!persona) {
+    const storedPersona = LocalDB.getPersona(personaId);
+    if (!storedPersona) {
       generatingPersonas[personaId] = false;
       return;
     }
+    const persona = retryContext
+      ? { ...storedPersona, storyMemory: LocalDB.getEffectiveMemory(personaId, retryContext.messages) }
+      : storedPersona;
 
     const controller = new AbortController();
     generationControllers[personaId] = controller;
@@ -5262,7 +5255,7 @@ ${recMsgsStr}`;
 
     // Remove any trailing error message before generating new response
     const existingMsgs = LocalDB.getMessages(personaId);
-    if (existingMsgs && existingMsgs.length > 0) {
+    if (!retryContext && existingMsgs && existingMsgs.length > 0) {
       const lastMsg = existingMsgs[existingMsgs.length - 1];
       if (lastMsg && (lastMsg.isError || (lastMsg.id && lastMsg.id.startsWith('err-')))) {
         LocalDB.deleteMessage(personaId, lastMsg.id);
@@ -5274,7 +5267,7 @@ ${recMsgsStr}`;
     }
 
     // Mark user messages as read (double blue checkmark)
-    const activeMsgs = LocalDB.getMessages(personaId);
+    const activeMsgs = retryContext?.messages || LocalDB.getMessages(personaId);
     let markedRead = false;
     activeMsgs.forEach(m => {
       if (m.sender === 'user' && !m.isRead) {
@@ -5298,16 +5291,17 @@ ${recMsgsStr}`;
       showTypingIndicator();
       currentStatusEl.textContent = 'typing...';
       currentStatusEl.className = 'status-subtitle typing';
-      if (retiringBubble) scrollToBottomIfNearBottom();
+      if (retryContext || retiringBubble) scrollToBottomIfNearBottom();
       else scrollToBottom();
     }
     renderContactList(LocalDB.getPersonas());
 
-    const assistantMsgId = retiringBubble?.dataset.msgId || `msg-${Date.now()}`;
+    const assistantMsgId = retryContext?.originalMsg?.id || retiringBubble?.dataset.msgId || `msg-${Date.now()}`;
     activeStreamingState[personaId] = {
       assistantMsgId: assistantMsgId,
       fullText: '',
       oldRawText,
+      retryContext,
       bubbleEl: null
     };
     let assistantText = '';
@@ -5316,11 +5310,13 @@ ${recMsgsStr}`;
     if (retiringBubble && document.body.contains(retiringBubble)) {
       retiringBubble.classList.add('streaming-ghost');
       activeStreamingState[personaId].bubbleEl = retiringBubble;
+    } else if (retryContext && activePersonaId === personaId) {
+      renderCurrentMessageBatch();
     }
 
     try {
       const settings = LocalDB.getSettings();
-      const messages = LocalDB.getMessages(personaId);
+      const messages = retryContext?.messages || LocalDB.getMessages(personaId);
       const extraSteering = customInstruction && customInstruction.trim()
         ? `\n\n[STEERING INSTRUCTION FOR THIS TURN]: You MUST specifically follow this custom direction from the user for this response turn: "${customInstruction.trim()}".`
         : '';
@@ -5339,6 +5335,7 @@ ${recMsgsStr}`;
         instructionRevision: JSON.stringify([persona.name || '', persona.description || '', persona.systemPrompt || '']),
         mode: 'chat'
       }, controller.signal);
+      if (!assistantText.trim()) throw new Error('AI model returned an empty response.');
 
       const finalAssistantMsg = {
         id: assistantMsgId,
@@ -5347,10 +5344,11 @@ ${recMsgsStr}`;
         timestamp: new Date().toISOString(),
         ...(customInstruction && customInstruction.trim() ? { retryInstruction: customInstruction.trim() } : {})
       };
-      LocalDB.addMessage(personaId, finalAssistantMsg);
+      if (retryContext) LocalDB.setMessages(personaId, [...messages, finalAssistantMsg]);
+      else LocalDB.addMessage(personaId, finalAssistantMsg);
       if (activePersonaId === personaId) {
         activeMessagesList = LocalDB.getMessages(personaId) || [];
-        displayedMessageCount++;
+        if (!retryContext) displayedMessageCount++;
       }
 
       const allMsgs = LocalDB.getMessages(personaId);
@@ -5367,7 +5365,9 @@ ${recMsgsStr}`;
         removeTypingIndicator();
       }
 
-      if (wasCancelled) {
+      if (retryContext) {
+        if (!wasCancelled) showToast(`Could not regenerate response: ${err.message || String(err)}`, 'error');
+      } else if (wasCancelled) {
         const partialText = activeStreamingState[personaId]?.fullText || '';
         if (partialText.trim()) {
           LocalDB.addMessage(personaId, {
@@ -5408,6 +5408,10 @@ ${recMsgsStr}`;
       delete generationControllers[personaId];
       updateGenerationControls(personaId);
       if (activePersonaId === personaId) {
+        if (retryContext) {
+          const firstVisibleIndex = Math.max(0, retryContext.messages.length - displayedMessageCount);
+          displayedMessageCount = LocalDB.getMessages(personaId).length - firstVisibleIndex;
+        }
         renderCurrentMessageBatch();
         updateHeaderStatus(personaId);
       }
@@ -5763,36 +5767,18 @@ ${recMsgsStr}`;
     const targetPersonaId = activePersonaId;
     if (!targetPersonaId || generatingPersonas[targetPersonaId]) return;
 
-    // Grab old bubble and its raw text — bubble stays in DOM for overwrite effect
-    const oldBubble = document.getElementById(msgId);
-    const oldTextEl = oldBubble?.querySelector('.message-text');
-    const oldRawText = oldTextEl?.dataset.rawText || oldTextEl?.textContent || '';
-
     const msgs = LocalDB.getMessages(targetPersonaId);
     const targetIdx = msgs.findIndex(m => m.id === msgId);
     if (targetIdx === -1) return;
 
     const originalMsg = msgs[targetIdx];
+    const oldBubble = document.getElementById(msgId);
+    const retryContext = { originalMsg, messages: msgs.slice(0, targetIdx) };
+    const firstVisibleIndex = Math.max(0, msgs.length - displayedMessageCount);
+    activeMessagesList = retryContext.messages;
+    displayedMessageCount = Math.max(0, targetIdx - firstVisibleIndex);
 
-    // Crash-safe backup: if page reloads mid-generation, restore the original message.
-    // Key includes personaId so multiple personas don't collide.
-    const backupKey = `retry_backup_${targetPersonaId}`;
-    try {
-      localStorage.setItem(backupKey, JSON.stringify({
-        personaId: targetPersonaId,
-        originalMsg,
-        // All messages after the retried one are also removed — save them for restore.
-        trailing: msgs.slice(targetIdx + 1)
-      }));
-    } catch (e) {}
-
-    LocalDB.setMessages(targetPersonaId, msgs.slice(0, targetIdx));
-
-    // Sync list state without wiping the DOM
-    activeMessagesList = LocalDB.getMessages(targetPersonaId) || [];
-    displayedMessageCount = Math.min(displayedMessageCount, activeMessagesList.length);
-
-    // Remove DOM bubbles that came after the retried message so they don't linger
+    // Preview the replacement without changing the saved conversation.
     if (oldBubble) {
       let next = oldBubble.nextElementSibling;
       while (next) {
@@ -5803,23 +5789,7 @@ ${recMsgsStr}`;
       displayedMessageCount = chatFeedEl.querySelectorAll('.message-bubble[data-msg-id]').length - 1;
     }
 
-    try {
-      await generatePersonaResponse(targetPersonaId, null, customInstruction, oldBubble || null, oldRawText);
-    } catch (err) {
-      console.error('retryMessage unexpected error:', err);
-    } finally {
-      // Check if generation produced a replacement (success or error message).
-      const currentMsgs = LocalDB.getMessages(targetPersonaId);
-      const hasReplacement = currentMsgs.some(m => m.timestamp > originalMsg.timestamp);
-      if (!hasReplacement) {
-        // Nothing was saved — restore the original so the conversation isn't lost.
-        LocalDB.addMessage(targetPersonaId, originalMsg);
-        activeMessagesList = LocalDB.getMessages(targetPersonaId) || [];
-        displayedMessageCount = Math.min(displayedMessageCount + 1, activeMessagesList.length);
-      }
-      // Generation finished (success or error) — crash backup no longer needed.
-      try { localStorage.removeItem(backupKey); } catch (e) {}
-    }
+    await generatePersonaResponse(targetPersonaId, null, customInstruction, oldBubble, originalMsg.text || '', retryContext);
   }
 
   function restoreRetryBackupsOnLoad() {
@@ -5836,13 +5806,16 @@ ${recMsgsStr}`;
             localStorage.removeItem(key);
             continue;
           }
-          const { personaId, originalMsg } = backup;
+          const { personaId, originalMsg, trailing = [] } = backup;
           const currentMsgs = LocalDB.getMessages(personaId) || [];
-          // If a newer message exists, generation succeeded before the crash — discard backup.
-          const hasReplacement = currentMsgs.some(m => m.timestamp > originalMsg.timestamp);
-          if (!hasReplacement) {
-            // No replacement found — restore the original message.
-            LocalDB.addMessage(personaId, originalMsg);
+          const trailingIds = new Set(trailing.map(message => message.id));
+          const hasReplacement = currentMsgs.some(message => message.sender === 'persona'
+            && !message.isError && !message.id?.startsWith('err-')
+            && !trailingIds.has(message.id) && message.timestamp > originalMsg.timestamp);
+          if (!hasReplacement && !currentMsgs.some(message => message.id === originalMsg.id)) {
+            const prefix = currentMsgs.filter(message => !trailingIds.has(message.id)
+              && !(message.isError && message.timestamp > originalMsg.timestamp));
+            LocalDB.setMessages(personaId, [...prefix, originalMsg, ...trailing]);
           }
           localStorage.removeItem(key);
         } catch (e) {
@@ -5859,14 +5832,15 @@ ${recMsgsStr}`;
     if (!msgs || msgs.length === 0) return;
 
     const targetIdx = msgs.findIndex(m => m.id === msgId);
-    if (targetIdx > -1) {
-      const newMsgs = msgs.slice(0, targetIdx + 1);
-      LocalDB.setMessages(targetPersonaId, newMsgs);
-    }
+    if (targetIdx === -1) return;
+    const response = msgs[targetIdx + 1];
+    const originalMsg = response?.sender === 'persona' ? response : null;
+    const retryContext = { originalMsg, messages: msgs.slice(0, targetIdx + 1) };
+    activeMessagesList = retryContext.messages;
+    displayedMessageCount = Math.min(MESSAGE_BATCH_SIZE, activeMessagesList.length);
 
-    userScrolledUp = false;
-    renderChatFeed(targetPersonaId);
-    await generatePersonaResponse(targetPersonaId);
+    scrollToBottom();
+    await generatePersonaResponse(targetPersonaId, null, '', null, originalMsg?.text || '', retryContext);
   }
 
 

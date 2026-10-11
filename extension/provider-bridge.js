@@ -82,7 +82,10 @@ async function generateGemini(prompt, model, port, requestId, signal) {
     body,
     signal
   });
-  if (!response.ok) throw new Error(`Gemini Web returned HTTP ${response.status}. Sign in again and retry.`);
+  if (!response.ok) {
+    const reason = ProviderErrors.describe(await response.text(), response.statusText || 'The request failed.');
+    throw new Error(`Gemini Web returned HTTP ${response.status}: ${reason}`);
+  }
 
   const reader = response.body.getReader();
   const decoder = new TextDecoder();

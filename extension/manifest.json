@@ -29,7 +29,7 @@
         "https://gemini.google.com/*",
         "https://chat.deepseek.com/*"
       ],
-      "js": ["provider-bridge.js"],
+      "js": ["provider-errors.js", "provider-bridge.js"],
       "run_at": "document_idle"
     }
   ]
