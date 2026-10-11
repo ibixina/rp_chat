@@ -23,6 +23,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   const MEMORY_AUTO_SYNC_INTERVAL = 12;
+  const chatTimeFormatter = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' });
 
   // -------------------------------------------------------------
   // -------------------------------------------------------------
@@ -34,6 +35,10 @@ document.addEventListener('DOMContentLoaded', () => {
     STORE_NAME: 'kv_store',
     _cache: null,
     _dbPromise: null,
+    _savePending: false,
+    _saveScheduled: false,
+    _savePromise: null,
+    _migrationPromise: null,
 
     getDB() {
       if (!this._dbPromise) {
@@ -79,15 +84,16 @@ document.addEventListener('DOMContentLoaded', () => {
       try {
         const db = await this.getDB();
         if (!db) return false;
-        return new Promise((resolve) => {
+        return await new Promise((resolve) => {
           const tx = db.transaction(this.STORE_NAME, 'readwrite');
           const store = tx.objectStore(this.STORE_NAME);
-          const req = store.put(val, key);
-          req.onsuccess = () => resolve(true);
-          req.onerror = (err) => {
+          tx.oncomplete = () => resolve(true);
+          tx.onabort = () => resolve(false);
+          tx.onerror = (err) => {
             console.warn('[STORAGE] IndexedDB write error:', err);
             resolve(false);
           };
+          store.put(val, key);
         });
       } catch (err) {
         console.warn('[STORAGE] IndexedDB put error:', err);
@@ -157,21 +163,44 @@ document.addEventListener('DOMContentLoaded', () => {
           groupMessages: {},
           settings: {}
         };
-        await this.setIDB(this.KEY, data);
-        try {
-          localStorage.setItem(this.KEY, JSON.stringify(data));
-        } catch (e) {}
+        if (!await this.setIDB(this.KEY, data)) {
+          safeLocalStorageSet(this.KEY, JSON.stringify(data));
+        }
       }
 
       GroupChatCore.ensureCollections(data);
       this._cache = data;
+      this._migrationPromise = this.migrateMarkdown(data);
+      try {
+        await this._migrationPromise;
+      } finally {
+        this._migrationPromise = null;
+      }
       return this._cache;
+    },
+
+    async migrateMarkdown(data) {
+      if (data.migratedMarkdownV3) return;
+      let sliceStart = performance.now();
+      for (const messages of Object.values(data.messages || {})) {
+        for (const msg of messages) {
+          if (msg.text) msg.text = this.sanitizeText(msg.text);
+          if (performance.now() - sliceStart >= 8) {
+            await new Promise(resolve => setTimeout(resolve, 0));
+            if (this._cache !== data) return;
+            sliceStart = performance.now();
+          }
+        }
+      }
+      if (this._cache !== data) return;
+      data.migratedMarkdownV3 = true;
+      this.saveRaw(data);
     },
 
     getRaw() {
       if (this._cache) {
         GroupChatCore.ensureCollections(this._cache);
-        if (!this._cache.migratedMarkdownV3) {
+        if (!this._cache.migratedMarkdownV3 && !this._migrationPromise) {
           if (this._cache.messages) {
             for (const personaId in this._cache.messages) {
               this._cache.messages[personaId].forEach(msg => {
@@ -200,15 +229,43 @@ document.addEventListener('DOMContentLoaded', () => {
     saveRaw(data) {
       GroupChatCore.ensureCollections(data);
       this._cache = data;
-      // Persist asynchronously to IndexedDB (virtually unlimited quota)
-      this.setIDB(this.KEY, data);
+      this._savePending = true;
+      if (this._saveScheduled || this._savePromise) return;
+      this._saveScheduled = true;
+      queueMicrotask(() => {
+        this._saveScheduled = false;
+        this.flushPendingSave();
+      });
+    },
 
-      // Best-effort write to localStorage, catching quota error cleanly
-      safeLocalStorageSet(this.KEY, JSON.stringify(data));
+    async flushPendingSave() {
+      if (this._savePromise) return this._savePromise;
+      if (!this._savePending) return;
+      this._savePromise = this.persistPendingSaves();
+      try {
+        await this._savePromise;
+      } finally {
+        this._savePromise = null;
+        if (this._savePending) this.saveRaw(this._cache);
+      }
+    },
+
+    async persistPendingSaves() {
+      while (this._savePending) {
+        this._savePending = false;
+        const data = this._cache;
+        if (await this.setIDB(this.KEY, data)) {
+          try { localStorage.removeItem(this.KEY); } catch (e) {}
+        } else {
+          safeLocalStorageSet(this.KEY, JSON.stringify(data));
+        }
+      }
     },
 
     async clearAll() {
       this._cache = null;
+      this._savePending = false;
+      await this._savePromise;
       await this.deleteIDB(this.KEY);
       try {
         localStorage.clear();
@@ -280,7 +337,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const lastMsg = msgs[msgs.length - 1];
         const rawTs = lastMsg && lastMsg.timestamp ? new Date(lastMsg.timestamp).getTime() : (p.createdAt ? new Date(p.createdAt).getTime() : 0);
         const timeStr = lastMsg && lastMsg.timestamp && !isNaN(rawTs) 
-          ? new Date(lastMsg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) 
+          ? chatTimeFormatter.format(new Date(rawTs))
           : '';
 
         let avatar = p.avatarUrl || './uploads/default-avatar.svg';
@@ -4318,11 +4375,17 @@ ${recMsgsStr}`;
       activeMessagesList = LocalDB.getMessages(activePersonaId) || [];
     }
 
+    updateChatScrollIntent();
     const wasNearBottom = !userScrolledUp;
     const oldScrollHeight = chatFeedEl ? chatFeedEl.scrollHeight : 0;
     const oldScrollTop = chatFeedEl ? chatFeedEl.scrollTop : 0;
-
-    isProgrammaticScroll = true;
+    const feedTop = chatFeedEl.getBoundingClientRect().top;
+    const anchorBubble = (keepScrollPosition || !wasNearBottom)
+      ? Array.from(chatFeedEl.querySelectorAll('.message-bubble[data-msg-id]'))
+        .find(bubble => bubble.getBoundingClientRect().bottom > feedTop)
+      : null;
+    const anchorId = anchorBubble?.dataset.msgId;
+    const anchorOffset = anchorBubble ? anchorBubble.getBoundingClientRect().top - feedTop : 0;
 
     chatFeedEl.innerHTML = '';
 
@@ -4339,14 +4402,19 @@ ${recMsgsStr}`;
 
     const startIndex = Math.max(0, activeMessagesList.length - displayedMessageCount);
     const visibleMessages = activeMessagesList.slice(startIndex);
+    const streamState = activePersonaId ? activeStreamingState[activePersonaId] : null;
 
     visibleMessages.forEach(msg => {
-      appendMessageBubble(msg);
+      const isContinuing = streamState?.isContinuation && streamState.assistantMsgId === msg.id;
+      const bubble = appendMessageBubble(isContinuing ? { ...msg, text: streamState.fullText } : msg);
+      if (isContinuing) {
+        bubble.classList.add('streaming-ghost');
+        streamState.bubbleEl = bubble;
+      }
     });
 
     if (activePersonaId) {
-      const streamState = activeStreamingState[activePersonaId];
-      if (streamState && streamState.fullText) {
+      if (streamState && (streamState.fullText || streamState.oldRawText) && !streamState.isContinuation) {
         const ghostMsgObj = {
           id: streamState.assistantMsgId,
           sender: 'persona',
@@ -4356,6 +4424,7 @@ ${recMsgsStr}`;
         const ghostBubble = appendMessageBubble(ghostMsgObj);
         ghostBubble.classList.add('streaming-ghost');
         streamState.bubbleEl = ghostBubble;
+        updateStreamingBubble(streamState);
       }
     }
 
@@ -4363,18 +4432,18 @@ ${recMsgsStr}`;
       showTypingIndicator();
     }
 
-    if (keepScrollPosition) {
+    const restoredAnchor = anchorId ? document.getElementById(anchorId) : null;
+    if (restoredAnchor && chatFeedEl.contains(restoredAnchor)) {
+      setChatScrollTop(chatFeedEl.scrollTop + restoredAnchor.getBoundingClientRect().top - feedTop - anchorOffset);
+    } else if (keepScrollPosition) {
       const newScrollHeight = chatFeedEl.scrollHeight;
-      chatFeedEl.scrollTop = oldScrollTop + (newScrollHeight - oldScrollHeight);
+      setChatScrollTop(oldScrollTop + (newScrollHeight - oldScrollHeight));
     } else if (wasNearBottom) {
       scrollToBottom();
     } else {
-      chatFeedEl.scrollTop = oldScrollTop;
+      setChatScrollTop(oldScrollTop);
     }
-
-    setTimeout(() => {
-      isProgrammaticScroll = false;
-    }, 100);
+    updateScrollBottomBtn();
   }
 
   function loadOlderMessages() {
@@ -4384,35 +4453,75 @@ ${recMsgsStr}`;
       activeMessagesList = LocalDB.getMessages(activePersonaId) || [];
     }
     if (displayedMessageCount >= activeMessagesList.length) return;
+    const oldStart = Math.max(0, activeMessagesList.length - displayedMessageCount);
+    const oldScrollHeight = chatFeedEl.scrollHeight;
+    const oldScrollTop = chatFeedEl.scrollTop;
     displayedMessageCount = Math.min(displayedMessageCount + MESSAGE_BATCH_SIZE, activeMessagesList.length);
-    renderCurrentMessageBatch(true);
+    const newStart = Math.max(0, activeMessagesList.length - displayedMessageCount);
+    const fragment = document.createDocumentFragment();
+    activeMessagesList.slice(newStart, oldStart).forEach(msg => appendMessageBubble(msg, fragment));
+    const banner = document.getElementById('load-older-messages-banner');
+    chatFeedEl.insertBefore(fragment, banner ? banner.nextSibling : chatFeedEl.firstChild);
+    const remainingCount = activeMessagesList.length - displayedMessageCount;
+    if (banner && remainingCount) {
+      banner.innerHTML = `<i class="fa-solid fa-clock-rotate-left"></i> Load older messages (${remainingCount} remaining)`;
+    } else {
+      banner?.remove();
+    }
+    setChatScrollTop(oldScrollTop + chatFeedEl.scrollHeight - oldScrollHeight);
+    updateScrollBottomBtn();
+  }
+
+  function updateStreamingBubble(state) {
+    const textEl = state.bubbleEl?.querySelector('.message-text');
+    if (!textEl) return;
+    const remaining = state.oldRawText ? state.oldRawText.slice(state.fullText.length) : '';
+    textEl.dataset.rawText = state.fullText;
+    textEl.innerHTML = formatMessageText(state.fullText)
+      + (remaining ? `<span class="overwrite-ghost">${escapeHtml(remaining)}</span>` : '');
+  }
+
+  function scheduleStreamingRender(personaId) {
+    const state = activeStreamingState[personaId];
+    if (!state || state.renderFrame != null || activePersonaId !== personaId) return;
+    state.renderFrame = requestAnimationFrame(() => {
+      state.renderFrame = null;
+      if (activeStreamingState[personaId] !== state || activePersonaId !== personaId) return;
+      if (!state.bubbleEl || !chatFeedEl.contains(state.bubbleEl)) {
+        if (state.isContinuation) return;
+        state.bubbleEl = appendMessageBubble({
+          id: state.assistantMsgId,
+          sender: 'persona',
+          text: state.fullText,
+          timestamp: new Date().toISOString()
+        });
+        state.bubbleEl.classList.add('streaming-ghost');
+        const typingIndicator = document.getElementById('typing-indicator-bubble');
+        if (typingIndicator) chatFeedEl.insertBefore(state.bubbleEl, typingIndicator);
+      }
+      if (state.isContinuation) removeTypingIndicator();
+      updateStreamingBubble(state);
+      scrollToBottomIfNearBottom();
+    });
   }
 
   let userScrolledUp = false;
-  let isProgrammaticScroll = false;
+  let lastHandledScrollTop = null;
   let isScrollLoading = false;
 
   if (chatFeedEl) {
     chatFeedEl.addEventListener('scroll', () => {
+      updateChatScrollIntent();
       if (activeGroupId) {
         activeMessagesList = LocalDB.getGroupMessages(activeGroupId) || [];
       } else if (activePersonaId) {
         activeMessagesList = LocalDB.getMessages(activePersonaId) || [];
       }
-      if (chatFeedEl.scrollTop <= 60 && displayedMessageCount < activeMessagesList.length) {
+      if (userScrolledUp && chatFeedEl.scrollTop <= 60 && displayedMessageCount < activeMessagesList.length) {
         if (!isScrollLoading) {
           isScrollLoading = true;
           loadOlderMessages();
           setTimeout(() => { isScrollLoading = false; }, 300);
-        }
-      }
-
-      if (!isProgrammaticScroll) {
-        const distanceToBottom = chatFeedEl.scrollHeight - chatFeedEl.scrollTop - chatFeedEl.clientHeight;
-        if (distanceToBottom > 15) {
-          userScrolledUp = true;
-        } else {
-          userScrolledUp = false;
         }
       }
 
@@ -4460,24 +4569,31 @@ ${recMsgsStr}`;
   function scrollToBottom() {
     if (chatFeedEl) {
       userScrolledUp = false;
-      isProgrammaticScroll = true;
-      chatFeedEl.scrollTop = chatFeedEl.scrollHeight;
-      requestAnimationFrame(() => {
-        if (chatFeedEl) chatFeedEl.scrollTop = chatFeedEl.scrollHeight;
-        setTimeout(() => {
-          isProgrammaticScroll = false;
-        }, 50);
-      });
+      setChatScrollTop(chatFeedEl.scrollHeight);
     }
     updateScrollBottomBtn();
   }
 
   function scrollToBottomIfNearBottom() {
     if (!chatFeedEl) return;
+    updateChatScrollIntent();
     if (!userScrolledUp) {
       scrollToBottom();
     }
     updateScrollBottomBtn();
+  }
+
+  function setChatScrollTop(top) {
+    chatFeedEl.scrollTop = top;
+    lastHandledScrollTop = chatFeedEl.scrollTop;
+  }
+
+  function updateChatScrollIntent() {
+    if (!chatFeedEl) return;
+    // Content growth alone must not change whether we follow the latest message.
+    if (lastHandledScrollTop !== null && Math.abs(chatFeedEl.scrollTop - lastHandledScrollTop) < 1) return;
+    lastHandledScrollTop = chatFeedEl.scrollTop;
+    userScrolledUp = !isNearBottom();
   }
 
   function updateScrollBottomBtn() {
@@ -4570,10 +4686,10 @@ ${recMsgsStr}`;
     `;
   }
 
-  function appendMessageBubble(msg) {
+  function appendMessageBubble(msg, container = chatFeedEl) {
     const inGroup = !!activeGroupId;
     const isPersona = msg.sender === 'persona';
-    const persona = isPersona ? LocalDB.getPersona(inGroup ? msg.personaId : activePersonaId) : null;
+    const persona = inGroup && isPersona ? LocalDB.getPersona(msg.personaId) : null;
     const groupMessages = inGroup ? LocalDB.getGroupMessages(activeGroupId) : [];
     const replyTarget = inGroup && msg.replyToId
       ? groupMessages.find(message => message.id === msg.replyToId) || msg.replyToSnapshot || null
@@ -4600,9 +4716,8 @@ ${recMsgsStr}`;
     bubble.id = msg.id;
     bubble.dataset.msgId = msg.id;
 
-    const timeStr = msg.timestamp
-      ? new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      : 'Just now';
+    const timestamp = msg.timestamp ? new Date(msg.timestamp) : null;
+    const timeStr = timestamp && !isNaN(timestamp.getTime()) ? chatTimeFormatter.format(timestamp) : 'Just now';
 
     let statusIcon = '';
     if (msg.sender === 'user') {
@@ -4821,7 +4936,7 @@ ${recMsgsStr}`;
       lastTapTime = currentTime;
     });
 
-    chatFeedEl.appendChild(bubble);
+    container.appendChild(bubble);
     return bubble;
   }
 
@@ -5160,10 +5275,11 @@ ${recMsgsStr}`;
 
     // Mark user messages as read (double blue checkmark)
     const activeMsgs = LocalDB.getMessages(personaId);
+    let markedRead = false;
     activeMsgs.forEach(m => {
       if (m.sender === 'user' && !m.isRead) {
         m.isRead = true;
-        LocalDB.updateMessage(personaId, m.id, { isRead: true });
+        markedRead = true;
         if (activePersonaId === personaId) {
           const userBubble = document.getElementById(m.id);
           if (userBubble) {
@@ -5176,19 +5292,22 @@ ${recMsgsStr}`;
         }
       }
     });
+    if (markedRead) LocalDB.saveRaw(LocalDB.getRaw());
 
     if (activePersonaId === personaId) {
       showTypingIndicator();
       currentStatusEl.textContent = 'typing...';
       currentStatusEl.className = 'status-subtitle typing';
-      scrollToBottom();
+      if (retiringBubble) scrollToBottomIfNearBottom();
+      else scrollToBottom();
     }
     renderContactList(LocalDB.getPersonas());
 
-    const assistantMsgId = `msg-${Date.now()}`;
+    const assistantMsgId = retiringBubble?.dataset.msgId || `msg-${Date.now()}`;
     activeStreamingState[personaId] = {
       assistantMsgId: assistantMsgId,
       fullText: '',
+      oldRawText,
       bubbleEl: null
     };
     let assistantText = '';
@@ -5211,45 +5330,7 @@ ${recMsgsStr}`;
         const state = activeStreamingState[personaId];
         if (state) {
           state.fullText += chunkText;
-        }
-
-        if (activePersonaId === personaId) {
-          const currentBubble = state ? state.bubbleEl : null;
-          const isBubbleInDom = currentBubble && document.body.contains(currentBubble);
-
-          if (!isBubbleInDom) {
-            const newMsgObj = {
-              id: assistantMsgId,
-              sender: 'persona',
-              text: state ? state.fullText : chunkText,
-              timestamp: new Date().toISOString()
-            };
-            const newBubble = appendMessageBubble(newMsgObj);
-            newBubble.classList.add('streaming-ghost');
-            if (state) state.bubbleEl = newBubble;
-
-            const typingInd = document.getElementById('typing-indicator-bubble');
-            if (typingInd) {
-              chatFeedEl.insertBefore(newBubble, typingInd);
-            }
-          } else {
-            const textEl = currentBubble.querySelector('.message-text');
-            if (textEl) {
-              const currentRaw = state ? state.fullText : ((textEl.dataset.rawText || '') + chunkText);
-              textEl.dataset.rawText = currentRaw;
-
-              // Overwrite effect: show new text, ghost any remaining old text not yet reached
-              if (oldRawText && currentRaw.length < oldRawText.length) {
-                const remaining = oldRawText.slice(currentRaw.length);
-                textEl.innerHTML = formatMessageText(currentRaw) +
-                  `<span class="overwrite-ghost">${remaining.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</span>`;
-              } else {
-                textEl.innerHTML = formatMessageText(currentRaw);
-              }
-            }
-          }
-
-          scrollToBottomIfNearBottom();
+          scheduleStreamingRender(personaId);
         }
       }, false, {
         threadId: `${window.location.origin}|${personaId}:chat`,
@@ -5317,8 +5398,8 @@ ${recMsgsStr}`;
         }
       }
     } finally {
-      isProgrammaticScroll = true;
       const state = activeStreamingState[personaId];
+      if (state?.renderFrame != null) cancelAnimationFrame(state.renderFrame);
       if (state && state.bubbleEl && document.body.contains(state.bubbleEl) && activePersonaId !== personaId) {
         state.bubbleEl.remove();
       }
@@ -5326,18 +5407,11 @@ ${recMsgsStr}`;
       generatingPersonas[personaId] = false;
       delete generationControllers[personaId];
       updateGenerationControls(personaId);
-      removeTypingIndicator();
-
-
       if (activePersonaId === personaId) {
         renderCurrentMessageBatch();
         updateHeaderStatus(personaId);
       }
       renderContactList(LocalDB.getPersonas());
-
-      setTimeout(() => {
-        isProgrammaticScroll = false;
-      }, 100);
     }
   }
 
@@ -5726,6 +5800,7 @@ ${recMsgsStr}`;
         next = next.nextElementSibling;
         if (toRemove.id !== 'typing-indicator-bubble') toRemove.remove();
       }
+      displayedMessageCount = chatFeedEl.querySelectorAll('.message-bubble[data-msg-id]').length - 1;
     }
 
     try {
@@ -5802,6 +5877,14 @@ ${recMsgsStr}`;
     const controller = new AbortController();
     generationControllers[targetPersonaId] = controller;
     updateGenerationControls(targetPersonaId);
+    const originalText = msg.text;
+    activeStreamingState[targetPersonaId] = {
+      assistantMsgId: msg.id,
+      fullText: originalText,
+      bubbleEl: bubble,
+      isContinuation: true
+    };
+    bubble.classList.add('streaming-ghost');
 
     if (activePersonaId === targetPersonaId) {
       showTypingIndicator();
@@ -5810,8 +5893,6 @@ ${recMsgsStr}`;
     }
 
     let streamedText = '';
-    const textEl = bubble.querySelector('.message-text');
-    const originalText = msg.text;
 
     try {
       const persona = LocalDB.getPersona(targetPersonaId);
@@ -5824,15 +5905,9 @@ ${recMsgsStr}`;
       let appendedText = '';
       appendedText = await streamAiCompletion(promptMessages, settings, (chunk) => {
         streamedText += chunk;
-        if (activePersonaId === targetPersonaId) {
-          removeTypingIndicator();
-          if (textEl) {
-            const updatedRaw = originalText + streamedText;
-            textEl.dataset.rawText = updatedRaw;
-            textEl.innerHTML = formatMessageText(updatedRaw);
-          }
-          scrollToBottomIfNearBottom();
-        }
+        const state = activeStreamingState[targetPersonaId];
+        if (state) state.fullText = originalText + streamedText;
+        scheduleStreamingRender(targetPersonaId);
       }, false, {
         threadId: `${window.location.origin}|${targetPersonaId}:chat`,
         messageId: msg.id,
@@ -5861,11 +5936,14 @@ ${recMsgsStr}`;
         });
       }
     } finally {
+      const state = activeStreamingState[targetPersonaId];
+      if (state?.renderFrame != null) cancelAnimationFrame(state.renderFrame);
+      delete activeStreamingState[targetPersonaId];
       generatingPersonas[targetPersonaId] = false;
       delete generationControllers[targetPersonaId];
       updateGenerationControls(targetPersonaId);
       if (activePersonaId === targetPersonaId) {
-        removeTypingIndicator();
+        renderCurrentMessageBatch();
         updateHeaderStatus(targetPersonaId);
       }
     }
