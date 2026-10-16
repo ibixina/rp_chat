@@ -1188,6 +1188,13 @@ body, html {
   box-sizing: border-box;
 }
 
+.message-generation-error {
+  margin-top: 10px;
+  color: #f87171;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .message-text img {
   max-width: 100%;
   max-height: 400px;

@@ -147,7 +147,7 @@ function chatFixture() {
     scrollToBottom, scrollToBottomIfNearBottom, retryMessage, generatePersonaResponse, generateResponseForUserMessage, restoreRetryBackupsOnLoad,
     stop: () => generationControllers.persona.abort(),
     setActivePersona: id => { activePersonaId = id; },
-    state: () => ({ userScrolledUp, displayedMessageCount })
+    state: () => ({ userScrolledUp, displayedMessageCount, retryError: failedResponseRetries.persona })
   };`, context);
   context.chat.renderChatFeed('persona');
   return {
@@ -343,7 +343,8 @@ for (const outcome of ['error before streaming', 'error after streaming', 'cance
     assert.equal(fixture.firstVisible().getBoundingClientRect().top, offset);
     assert.equal(fixture.pendingFrames, 0);
     assert.equal(fixture.streaming.persona, undefined);
-    assert.equal(fixture.toasts.length, outcome === 'cancel' ? 0 : 1);
+    assert.equal(fixture.toasts.length, 0);
+    assert.equal(!!fixture.chat.state().retryError, outcome !== 'cancel');
   });
 }
 
@@ -522,7 +523,72 @@ test('regeneration and normal generation display the complete provider reason', 
     const generation = regenerate ? fixture.chat.retryMessage('message-89') : fixture.chat.generatePersonaResponse('persona');
     fixture.stream.fail(new Error(message));
     await generation;
-    const displayed = regenerate ? fixture.toasts.at(-1).message : fixture.messages.at(-1).text;
+    const displayed = regenerate ? fixture.chat.state().retryError.text : fixture.messages.at(-1).text;
     assert.ok(displayed.includes(message));
+    assert.equal(fixture.toasts.length, 0);
   }
+});
+
+test('a failed error retry keeps the latest reason inline until a successful replacement', async () => {
+  const fixture = chatFixture();
+  const last = fixture.messages.at(-1);
+  last.id = 'err-original';
+  last.isError = true;
+  last.text = 'Original error';
+  fixture.chat.renderChatFeed('persona');
+  const original = JSON.stringify(fixture.messages);
+
+  for (const reason of ['Provider overloaded', 'Provider temporarily unavailable']) {
+    const generation = fixture.chat.retryMessage(last.id, 'Retry instruction');
+    assert.equal(fixture.chat.state().retryError, undefined);
+    fixture.stream.fail(new Error(reason));
+    await generation;
+    assert.ok(fixture.chat.state().retryError.text.includes(reason));
+    assert.equal(fixture.chat.state().retryError.messageId, last.id);
+    assert.equal(fixture.chat.state().retryError.retryInstruction, 'Retry instruction');
+    assert.equal(JSON.stringify(fixture.messages), original);
+    assert.equal(fixture.toasts.length, 0);
+  }
+
+  const generation = fixture.chat.retryMessage(last.id);
+  fixture.stream.push('Successful replacement');
+  fixture.chat.renderCurrentMessageBatch(true);
+  fixture.stream.finish();
+  await generation;
+  assert.equal(fixture.chat.state().retryError, undefined);
+  assert.equal(fixture.messages.at(-1).id, 'err-original');
+  assert.equal(fixture.messages.at(-1).text, 'Successful replacement');
+  assert.equal(fixture.messages.at(-1).isError, undefined);
+
+  const nextGeneration = fixture.chat.generatePersonaResponse('persona');
+  assert.equal(fixture.messages.at(-1).text, 'Successful replacement');
+  fixture.stream.push('Next response');
+  fixture.stream.finish();
+  await nextGeneration;
+  assert.equal(fixture.messages.at(-2).text, 'Successful replacement');
+});
+
+test('generating from an unanswered user message displays failures inline without an overlay', async () => {
+  const fixture = chatFixture();
+  fixture.messages.at(-1).sender = 'user';
+  fixture.messages.at(-1).isRead = true;
+  const generation = fixture.chat.generateResponseForUserMessage('message-89');
+  fixture.stream.fail(new Error('Provider overloaded'));
+  await generation;
+  assert.equal(fixture.messages.at(-1).isError, true);
+  assert.ok(fixture.messages.at(-1).text.includes('Provider overloaded'));
+  assert.equal(fixture.toasts.length, 0);
+});
+
+test('normal generation removes the trailing error bubble before its replacement arrives', async () => {
+  const fixture = chatFixture();
+  const last = fixture.messages.at(-1);
+  last.isError = true;
+  fixture.chat.renderChatFeed('persona');
+  const generation = fixture.chat.generatePersonaResponse('persona');
+  assert.ok(!fixture.feed.children.some(bubble => bubble.id === last.id));
+  fixture.stream.push('Replacement');
+  fixture.stream.finish();
+  await generation;
+  assert.equal(fixture.messages.at(-1).text, 'Replacement');
 });

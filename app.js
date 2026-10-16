@@ -1658,7 +1658,7 @@ ${persona.storyMemory || "No prior narrative memory recorded."}
         break;
       }
       const msg = messages[i];
-      if (msg.isError || (msg.id && msg.id.startsWith('err-'))) {
+      if (msg.isError) {
         continue;
       }
       const role = msg.sender === 'user' ? 'user' : 'assistant';
@@ -4324,6 +4324,8 @@ ${recMsgsStr}`;
   }
 
   const MESSAGE_BATCH_SIZE = 30;
+  // Keep retry failures in the UI without changing the saved conversation.
+  const failedResponseRetries = {};
   let activeMessagesList = [];
   let displayedMessageCount = 30;
 
@@ -4662,6 +4664,10 @@ ${recMsgsStr}`;
   function appendMessageBubble(msg, container = chatFeedEl) {
     const inGroup = !!activeGroupId;
     const isPersona = msg.sender === 'persona';
+    const retryError = !inGroup && failedResponseRetries[activePersonaId]?.messageId === msg.id
+      ? failedResponseRetries[activePersonaId] : null;
+    const isStreaming = !inGroup && activeStreamingState[activePersonaId]?.assistantMsgId === msg.id;
+    const messageText = msg.isError && retryError ? retryError.text : msg.text;
     const persona = inGroup && isPersona ? LocalDB.getPersona(msg.personaId) : null;
     const groupMessages = inGroup ? LocalDB.getGroupMessages(activeGroupId) : [];
     const replyTarget = inGroup && msg.replyToId
@@ -4700,9 +4706,9 @@ ${recMsgsStr}`;
     }
 
     let errorRetryHtml = '';
-    if (!inGroup && (msg.isError || (msg.id && msg.id.startsWith('err-')))) {
+    if (!inGroup && !isStreaming && (msg.isError || retryError)) {
       errorRetryHtml = `
-        <div style="margin-top: 10px;">
+        <div class="message-error-actions" style="margin-top: 10px;">
           <button class="btn-retry-error-msg" style="background: rgba(239, 68, 68, 0.25); border: 1px solid rgba(239, 68, 68, 0.5); color: #f87171; padding: 5px 14px; border-radius: 6px; font-size: 12px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; font-weight: 600;">
             <i class="fa-solid fa-rotate-right"></i> Retry Response
           </button>
@@ -4714,7 +4720,8 @@ ${recMsgsStr}`;
       <div class="bubble-content">
         ${senderHtml}
         ${replyHtml}
-        <div class="message-text" data-raw-text="${escapeHtml(msg.text)}" title="Double-click to edit text">${formatMessageText(msg.text)}</div>
+        <div class="message-text" data-raw-text="${escapeHtml(messageText)}" title="Double-click to edit text">${formatMessageText(messageText)}</div>
+        ${retryError && !msg.isError && !isStreaming ? `<div class="message-generation-error" role="alert">${escapeHtml(retryError.text)}</div>` : ''}
         ${errorRetryHtml}
       </div>
       ${renderReactionsHtml(msg.reactions)}
@@ -4782,7 +4789,7 @@ ${recMsgsStr}`;
     if (errorRetryBtn) {
       errorRetryBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        const existingInstruction = msg.retryInstruction || '';
+        const existingInstruction = retryError?.retryInstruction ?? msg.retryInstruction ?? '';
         if (e.shiftKey || e.ctrlKey) {
           retryMessage(msg.id, existingInstruction);
         } else {
@@ -5167,7 +5174,7 @@ ${recMsgsStr}`;
       const msgs = LocalDB.getMessages(activePersonaId);
       if (msgs && msgs.length > 0) {
         const lastMsg = msgs[msgs.length - 1];
-        if (lastMsg && (lastMsg.sender === 'user' || lastMsg.isError || (lastMsg.id && lastMsg.id.startsWith('err-')))) {
+        if (lastMsg && (lastMsg.sender === 'user' || lastMsg.isError)) {
           userScrolledUp = false;
           scrollToBottom();
           await generatePersonaResponse(activePersonaId);
@@ -5226,6 +5233,7 @@ ${recMsgsStr}`;
     const persona = retryContext
       ? { ...storedPersona, storyMemory: LocalDB.getEffectiveMemory(personaId, retryContext.messages) }
       : storedPersona;
+    delete failedResponseRetries[personaId];
 
     const controller = new AbortController();
     generationControllers[personaId] = controller;
@@ -5235,9 +5243,10 @@ ${recMsgsStr}`;
     const existingMsgs = LocalDB.getMessages(personaId);
     if (!retryContext && existingMsgs && existingMsgs.length > 0) {
       const lastMsg = existingMsgs[existingMsgs.length - 1];
-      if (lastMsg && (lastMsg.isError || (lastMsg.id && lastMsg.id.startsWith('err-')))) {
+      if (lastMsg?.isError) {
         LocalDB.deleteMessage(personaId, lastMsg.id);
         if (activePersonaId === personaId) {
+          document.getElementById(lastMsg.id)?.remove();
           activeMessagesList = LocalDB.getMessages(personaId) || [];
           displayedMessageCount = Math.min(displayedMessageCount, activeMessagesList.length);
         }
@@ -5286,6 +5295,8 @@ ${recMsgsStr}`;
 
     // Pre-assign retiring bubble as stream target so chunk 1 hits it directly
     if (retiringBubble && document.body.contains(retiringBubble)) {
+      retiringBubble.querySelector('.message-error-actions')?.remove();
+      retiringBubble.querySelector('.message-generation-error')?.remove();
       retiringBubble.classList.add('streaming-ghost');
       activeStreamingState[personaId].bubbleEl = retiringBubble;
     } else if (retryContext && activePersonaId === personaId) {
@@ -5344,9 +5355,29 @@ ${recMsgsStr}`;
         removeTypingIndicator();
       }
 
-      if (retryContext) {
-        if (!wasCancelled) showToast(`Could not regenerate response: ${err.message || String(err)}`, 'error');
-      } else if (wasCancelled) {
+      if (!wasCancelled) {
+        const errorMsgObj = {
+          id: `err-${Date.now()}`,
+          sender: 'persona',
+          text: `⚠️ Error generating response: ${err.message || err}`,
+          timestamp: new Date().toISOString(),
+          isError: true,
+          ...(customInstruction && customInstruction.trim() ? { retryInstruction: customInstruction.trim() } : {})
+        };
+        if (retryContext?.originalMsg) {
+          failedResponseRetries[personaId] = {
+            messageId: retryContext.originalMsg.id,
+            text: errorMsgObj.text,
+            retryInstruction: customInstruction.trim()
+          };
+        } else {
+          LocalDB.addMessage(personaId, errorMsgObj);
+          if (activePersonaId === personaId) {
+            activeMessagesList = LocalDB.getMessages(personaId) || [];
+            displayedMessageCount++;
+          }
+        }
+      } else if (!retryContext) {
         const partialText = activeStreamingState[personaId]?.fullText || '';
         if (partialText.trim()) {
           LocalDB.addMessage(personaId, {
@@ -5360,20 +5391,6 @@ ${recMsgsStr}`;
             activeMessagesList = LocalDB.getMessages(personaId) || [];
             displayedMessageCount++;
           }
-        }
-      } else {
-        const errorMsgObj = {
-          id: `err-${Date.now()}`,
-          sender: 'persona',
-          text: `⚠️ Error generating response: ${err.message || err}`,
-          timestamp: new Date().toISOString(),
-          isError: true,
-          ...(customInstruction && customInstruction.trim() ? { retryInstruction: customInstruction.trim() } : {})
-        };
-        LocalDB.addMessage(personaId, errorMsgObj);
-        if (activePersonaId === personaId) {
-          activeMessagesList = LocalDB.getMessages(personaId) || [];
-          displayedMessageCount++;
         }
       }
     } finally {
@@ -5789,7 +5806,7 @@ ${recMsgsStr}`;
           const currentMsgs = LocalDB.getMessages(personaId) || [];
           const trailingIds = new Set(trailing.map(message => message.id));
           const hasReplacement = currentMsgs.some(message => message.sender === 'persona'
-            && !message.isError && !message.id?.startsWith('err-')
+            && !message.isError
             && !trailingIds.has(message.id) && message.timestamp > originalMsg.timestamp);
           if (!hasReplacement && !currentMsgs.some(message => message.id === originalMsg.id)) {
             const prefix = currentMsgs.filter(message => !trailingIds.has(message.id)

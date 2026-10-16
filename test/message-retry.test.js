@@ -10,8 +10,8 @@ const source = fs.readFileSync(path.join(__dirname, '..', 'app.js'), 'utf8');
 const modalSource = source.slice(source.indexOf('  let pendingRetryMsgId = null;'), source.indexOf('  // UI Rendering: Contact List & Status'));
 const bubbleSource = source.slice(source.indexOf('  function appendMessageBubble('), source.indexOf('  function isMobileDevice('));
 
-function retryFixture() {
-  const msg = { id: 'err-original', sender: 'persona', text: 'Provider unavailable', isError: true, retryInstruction: 'Original instruction' };
+function retryFixture(overrides = {}, retryError = null, streaming = false) {
+  const msg = { id: 'err-original', sender: 'persona', text: 'Provider unavailable', isError: true, retryInstruction: 'Original instruction', ...overrides };
   let messages = [msg];
   const calls = [];
   function element() {
@@ -30,12 +30,17 @@ function retryFixture() {
   const retryButton = element();
   const bubble = {
     ...element(), attached: false,
-    querySelector: selector => selector === '.btn-retry-error-msg' ? retryButton : selector === '.message-text' ? element() : null,
+    querySelector(selector) {
+      if (selector === '.btn-retry-error-msg') return bubble.innerHTML.includes('btn-retry-error-msg') ? retryButton : null;
+      return selector === '.message-text' ? element() : null;
+    },
     querySelectorAll: () => [],
     remove() { this.attached = false; }
   };
   const context = vm.createContext({
     activeGroupId: null, activePersonaId: 'persona',
+    failedResponseRetries: retryError ? { persona: { messageId: msg.id, ...retryError } } : {},
+    activeStreamingState: streaming ? { persona: { assistantMsgId: msg.id } } : {},
     document: { getElementById: id => elements[id], createElement: () => bubble },
     chatFeedEl: { appendChild: child => { child.attached = true; } },
     GroupChatCore: { stableUnit: () => 0 },
@@ -53,6 +58,48 @@ function retryFixture() {
   context.append(msg);
   return { elements, retryButton, bubble, calls, msg, get messages() { return messages; } };
 }
+
+test('a successful response retaining an error message id has no error retry button', () => {
+  const fixture = retryFixture({ text: 'Recovered response', isError: undefined });
+  assert.ok(fixture.bubble.innerHTML.includes('Recovered response'));
+  assert.ok(!fixture.bubble.innerHTML.includes('btn-retry-error-msg'));
+});
+
+test('an error retry button is hidden while its replacement is streaming', () => {
+  const fixture = retryFixture({}, null, true);
+  assert.ok(!fixture.bubble.innerHTML.includes('btn-retry-error-msg'));
+});
+
+test('retrying an error shows only the latest failure text and offers another retry', () => {
+  const fixture = retryFixture({}, { text: 'Latest provider failure', retryInstruction: 'Updated instruction' });
+  assert.ok(fixture.bubble.innerHTML.includes('Latest provider failure'));
+  assert.ok(!fixture.bubble.innerHTML.includes('Provider unavailable'));
+  assert.ok(fixture.bubble.innerHTML.includes('btn-retry-error-msg'));
+  assert.ok(!fixture.bubble.innerHTML.includes('message-generation-error'));
+  fixture.retryButton.click({ shiftKey: true });
+  assert.deepEqual(fixture.calls, [['err-original', 'Updated instruction']]);
+});
+
+test('a failed regeneration shows an inline error with retry beside the preserved response', () => {
+  const fixture = retryFixture({ text: 'Original response', isError: undefined }, { text: 'Latest provider failure' });
+  assert.ok(fixture.bubble.innerHTML.includes('Original response'));
+  assert.ok(fixture.bubble.innerHTML.includes('Latest provider failure'));
+  assert.ok(fixture.bubble.innerHTML.includes('message-generation-error'));
+  assert.ok(fixture.bubble.innerHTML.includes('btn-retry-error-msg'));
+});
+
+test('successful replacements with error message ids remain in the next prompt', () => {
+  const promptSource = source.slice(source.indexOf('  function preparePromptMessages('), source.indexOf('  function isWebBridgeExtensionAvailable('));
+  const context = vm.createContext({
+    buildEndInstruction: () => '', buildSystemPrompt: () => '', estimateTokens: () => 1
+  });
+  vm.runInContext(`${promptSource}\nthis.prepare = preparePromptMessages;`, context);
+  const messages = context.prepare({}, [
+    { id: 'err-recovered', sender: 'persona', text: 'Successful replacement' },
+    { id: 'err-failed', sender: 'persona', text: 'Provider failed', isError: true }
+  ], {});
+  assert.deepEqual(Array.from(messages, message => message.content), ['', 'Successful replacement']);
+});
 
 for (const button of ['btn-cancel-retry-modal', 'btn-close-retry-modal']) {
   test(`cancelling error retry with ${button} leaves the saved message and bubble intact`, () => {
