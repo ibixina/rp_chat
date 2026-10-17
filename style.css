@@ -2303,3 +2303,45 @@ html, body {
     background-color: rgba(241, 92, 109, 0.12);
   }
 }
+
+.version-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 8px;
+  color: var(--text-muted);
+}
+
+.version-count {
+  font-size: 11px;
+  min-width: 26px;
+  text-align: center;
+}
+
+.version-btn {
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.version-btn:hover:not(:disabled) {
+  color: #53bdeb;
+  background-color: rgba(83, 189, 235, 0.15);
+}
+
+.version-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .version-btn {
+    min-width: 36px;
+    min-height: 32px;
+    font-size: 13px;
+  }
+}

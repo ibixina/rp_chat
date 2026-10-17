@@ -4329,11 +4329,55 @@ ${recMsgsStr}`;
   let activeMessagesList = [];
   let displayedMessageCount = 30;
 
+  // A version is a snapshot of a message plus the messages that followed it.
+  function makeVersionEntry(msg, trailing = []) {
+    const { versions, versionIndex, ...rest } = msg;
+    return { ...rest, trailing };
+  }
+
+  function switchMessageVersion(msgId, delta) {
+    const personaId = activePersonaId;
+    if (!personaId || activeGroupId || generatingPersonas[personaId]) return;
+    const all = LocalDB.getMessages(personaId) || [];
+    const idx = all.findIndex(m => m.id === msgId);
+    if (idx === -1 || !all[idx].versions) return;
+    const msg = all[idx];
+    const target = msg.versionIndex + delta;
+    if (target < 0 || target >= msg.versions.length) return;
+
+    const versions = msg.versions.map(v => ({ ...v }));
+    versions[msg.versionIndex] = makeVersionEntry(msg, all.slice(idx + 1));
+    const { trailing = [], ...rest } = versions[target];
+    versions[target] = { ...rest, trailing: [] };
+    const switched = { ...rest, id: msg.id, sender: msg.sender, versions, versionIndex: target };
+
+    const firstVisibleIndex = Math.max(0, activeMessagesList.length - displayedMessageCount);
+    LocalDB.setMessages(personaId, [...all.slice(0, idx), switched, ...trailing]);
+    delete failedResponseRetries[personaId];
+    activeMessagesList = getActiveChatMessages();
+    displayedMessageCount = activeMessagesList.length - Math.min(firstVisibleIndex, idx);
+    renderCurrentMessageBatch();
+  }
+
+  function finalizeMessageVersions(personaId) {
+    const all = LocalDB.getMessages(personaId) || [];
+    if (!all.some(m => m.versions)) return;
+    LocalDB.setMessages(personaId, all.map(m => {
+      if (!m.versions) return m;
+      const { versions, versionIndex, ...rest } = m;
+      return rest;
+    }));
+  }
+
   function getActiveChatMessages() {
     if (activeGroupId) return LocalDB.getGroupMessages(activeGroupId) || [];
     if (activePersonaId) {
-      return activeStreamingState[activePersonaId]?.retryContext?.messages
+      const messages = activeStreamingState[activePersonaId]?.retryContext?.messages
         || LocalDB.getMessages(activePersonaId) || [];
+      // After a failed retry, keep the later messages hidden so the error sits at the end.
+      const failedId = failedResponseRetries[activePersonaId]?.messageId;
+      const failedIdx = failedId ? messages.findIndex(m => m.id === failedId) : -1;
+      return failedIdx === -1 ? messages : messages.slice(0, failedIdx + 1);
     }
     return [];
   }
@@ -4728,6 +4772,12 @@ ${recMsgsStr}`;
       <div class="message-meta">
         <span>${timeStr}</span>
         ${statusIcon}
+        ${!inGroup && !isStreaming && msg.versions?.length > 1 ? `
+          <span class="version-switcher">
+            <button class="version-btn version-prev" title="Previous version" ${msg.versionIndex === 0 ? 'disabled' : ''}><i class="fa-solid fa-chevron-left"></i></button>
+            <span class="version-count">${msg.versionIndex + 1}/${msg.versions.length}</span>
+            <button class="version-btn version-next" title="Next version" ${msg.versionIndex === msg.versions.length - 1 ? 'disabled' : ''}><i class="fa-solid fa-chevron-right"></i></button>
+          </span>` : ''}
       </div>
 
       <div class="message-actions-toolbar">
@@ -4807,6 +4857,15 @@ ${recMsgsStr}`;
         else retryMessage(msg.id, existingInstruction);
       });
     }
+
+    bubble.querySelector('.version-prev')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      switchMessageVersion(msg.id, -1);
+    });
+    bubble.querySelector('.version-next')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      switchMessageVersion(msg.id, 1);
+    });
 
     const replyBtn = bubble.querySelector('.reply-btn');
     if (replyBtn) {
@@ -5202,6 +5261,9 @@ ${recMsgsStr}`;
       timestamp: new Date().toISOString()
     };
 
+    const hadHiddenMessages = !!failedResponseRetries[targetPersonaId];
+    delete failedResponseRetries[targetPersonaId];
+    finalizeMessageVersions(targetPersonaId);
     LocalDB.addMessage(targetPersonaId, userMsg);
     if (activePersonaId === targetPersonaId) {
       activeMessagesList = LocalDB.getMessages(targetPersonaId) || [];
@@ -5210,7 +5272,8 @@ ${recMsgsStr}`;
     messageInput.value = '';
     messageInput.style.height = 'auto';
 
-    appendMessageBubble(userMsg);
+    if (hadHiddenMessages) renderChatFeed(targetPersonaId);
+    else appendMessageBubble(userMsg);
     scrollToBottom();
 
     // Trigger auto memory summarization after user's message is added,
@@ -5344,8 +5407,22 @@ ${recMsgsStr}`;
         timestamp: new Date().toISOString(),
         ...(customInstruction && customInstruction.trim() ? { retryInstruction: customInstruction.trim() } : {})
       };
-      if (retryContext) LocalDB.setMessages(personaId, [...messages, finalAssistantMsg]);
-      else LocalDB.addMessage(personaId, finalAssistantMsg);
+      let committedMsg = finalAssistantMsg;
+      const retriedMsg = retryContext?.originalMsg;
+      if (retriedMsg && !retriedMsg.isError) {
+        // Keep every version (with the messages that followed it) until the user sends a new message.
+        const saved = LocalDB.getMessages(personaId) || [];
+        const savedIdx = saved.findIndex(m => m.id === assistantMsgId);
+        const current = savedIdx === -1 ? retriedMsg : saved[savedIdx];
+        const trailing = savedIdx === -1 ? [] : saved.slice(savedIdx + 1);
+        const versions = (current.versions || [makeVersionEntry(current)]).map(v => ({ ...v }));
+        const currentIndex = current.versions ? current.versionIndex : 0;
+        versions[currentIndex] = makeVersionEntry(current, trailing);
+        versions.push(makeVersionEntry(finalAssistantMsg));
+        committedMsg = { ...finalAssistantMsg, versions, versionIndex: versions.length - 1 };
+      }
+      if (retryContext) LocalDB.setMessages(personaId, [...messages, committedMsg]);
+      else LocalDB.addMessage(personaId, committedMsg);
       if (activePersonaId === personaId) {
         activeMessagesList = LocalDB.getMessages(personaId) || [];
         if (!retryContext) displayedMessageCount++;
@@ -5416,7 +5493,8 @@ ${recMsgsStr}`;
       if (activePersonaId === personaId) {
         if (retryContext) {
           const firstVisibleIndex = Math.max(0, retryContext.messages.length - displayedMessageCount);
-          displayedMessageCount = LocalDB.getMessages(personaId).length - firstVisibleIndex;
+          activeMessagesList = getActiveChatMessages();
+          displayedMessageCount = activeMessagesList.length - firstVisibleIndex;
         }
         renderCurrentMessageBatch();
         updateHeaderStatus(personaId);

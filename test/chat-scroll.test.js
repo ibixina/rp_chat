@@ -336,9 +336,16 @@ for (const outcome of ['error before streaming', 'error after streaming', 'cance
     assert.equal(JSON.stringify(fixture.messages), original);
     assert.equal(fixture.writes.length, 0);
     assert.equal(fixture.feed.children.find(bubble => bubble.id === 'message-85').text, 'Message 85');
-    assert.ok(fixture.messages.slice(86).every(message => fixture.feed.children.some(bubble => bubble.id === message.id)));
-    assert.equal(fixture.feed.querySelectorAll().length, 60);
-    assert.equal(fixture.chat.state().displayedMessageCount, 60);
+    const failed = outcome !== 'cancel';
+    const laterShown = fixture.messages.slice(86).map(message => fixture.feed.children.some(bubble => bubble.id === message.id));
+    // A failed retry keeps later messages hidden so the error sits at the end of the conversation.
+    assert.ok(failed ? laterShown.every(shown => !shown) : laterShown.every(Boolean));
+    if (failed) {
+      assert.equal(fixture.feed.children.at(-1).id, 'message-85');
+    } else {
+      assert.equal(fixture.feed.querySelectorAll().length, 60);
+      assert.equal(fixture.chat.state().displayedMessageCount, 60);
+    }
     assert.equal(fixture.firstVisible().id, anchorId);
     assert.equal(fixture.firstVisible().getBoundingClientRect().top, offset);
     assert.equal(fixture.pendingFrames, 0);
@@ -364,6 +371,11 @@ test('regeneration commits only the completed replacement and uses history and m
   assert.equal(fixture.messages.at(-1).id, 'message-85');
   assert.equal(fixture.messages.at(-1).text, 'Completed replacement');
   assert.equal(fixture.messages.at(-1).retryInstruction, 'Custom instruction');
+  const kept = fixture.messages.at(-1);
+  assert.equal(kept.versions.length, 2);
+  assert.equal(kept.versionIndex, 1);
+  assert.equal(kept.versions[0].text, 'Message 85');
+  assert.deepEqual(kept.versions[0].trailing.map(message => message.id), JSON.parse(original).slice(86).map(message => message.id));
   assert.equal(fixture.writes.length, 1);
   assert.equal(fixture.toasts.length, 0);
 });
