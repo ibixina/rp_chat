@@ -2225,3 +2225,81 @@ html, body {
   color: var(--accent-green);
   text-decoration: underline;
 }
+
+/* Touch devices: tap a bubble to open a roomy action panel with large, separated targets */
+@media (hover: none), (pointer: coarse) {
+  .message-bubble:hover .message-actions-toolbar,
+  .message-bubble:focus-within .message-actions-toolbar {
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(4px);
+  }
+
+  .message-bubble.actions-open {
+    z-index: 40;
+  }
+
+  .message-bubble .message-actions-toolbar,
+  .message-bubble.toolbar-below .message-actions-toolbar {
+    flex-wrap: wrap;
+    justify-content: center;
+    width: max-content;
+    max-width: min(92vw, 320px);
+    gap: 6px 4px;
+    padding: 8px;
+    border-radius: 18px;
+    top: -112px;
+  }
+
+  .message-bubble.toolbar-below .message-actions-toolbar {
+    top: calc(100% + 6px);
+  }
+
+  .message-bubble.actions-open .message-actions-toolbar {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+  }
+
+  .message-actions-toolbar .emoji-btn {
+    width: 44px;
+    height: 44px;
+    font-size: 24px;
+    padding: 0;
+    border-radius: 12px;
+  }
+
+  .message-actions-toolbar .emoji-btn:hover {
+    transform: none;
+  }
+
+  .message-actions-toolbar .emoji-btn:active {
+    background-color: rgba(255, 255, 255, 0.18);
+  }
+
+  .toolbar-divider {
+    flex-basis: 100%;
+    width: 100%;
+    height: 1px;
+    margin: 2px 0;
+  }
+
+  .message-actions-toolbar .action-btn {
+    width: 44px;
+    height: 44px;
+    font-size: 17px;
+    padding: 0;
+    border-radius: 12px;
+  }
+
+  .message-actions-toolbar .action-btn:active {
+    background-color: rgba(255, 255, 255, 0.12);
+  }
+
+  /* Keep the destructive action visually and physically apart */
+  .message-actions-toolbar .delete-btn {
+    margin-left: 14px;
+    color: #f15c6d;
+    background-color: rgba(241, 92, 109, 0.12);
+  }
+}

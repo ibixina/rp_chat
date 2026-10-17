@@ -4785,6 +4785,19 @@ ${recMsgsStr}`;
     bubble.addEventListener('focusin', positionToolbar);
     bubble.addEventListener('touchstart', positionToolbar, { passive: true });
 
+    // Touch: tap the bubble to open the action sheet; buttons only work once it is open.
+    bubble.addEventListener('click', (e) => {
+      if (!window.matchMedia('(hover: none), (pointer: coarse)').matches) return;
+      if (e.target.closest('.message-actions-toolbar, button, a, img, video, audio, .message-reply-quote')) return;
+      if (window.getSelection && String(window.getSelection()).length) return;
+      const wasOpen = bubble.classList.contains('actions-open');
+      document.querySelectorAll('.message-bubble.actions-open').forEach(el => el.classList.remove('actions-open'));
+      if (!wasOpen) {
+        positionToolbar();
+        bubble.classList.add('actions-open');
+      }
+    });
+
     const errorRetryBtn = bubble.querySelector('.btn-retry-error-msg');
     if (errorRetryBtn) {
       errorRetryBtn.addEventListener('click', (e) => {
@@ -6520,4 +6533,9 @@ ${recMsgsStr}`;
   }
 
   init();
+});
+
+document.addEventListener('click', (e) => {
+  if (e.target.closest('.message-bubble.actions-open')) return;
+  document.querySelectorAll('.message-bubble.actions-open').forEach(el => el.classList.remove('actions-open'));
 });
