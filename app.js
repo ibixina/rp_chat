@@ -4803,11 +4803,8 @@ ${recMsgsStr}`;
       errorRetryBtn.addEventListener('click', (e) => {
         e.stopPropagation();
         const existingInstruction = retryError?.retryInstruction ?? msg.retryInstruction ?? '';
-        if (e.shiftKey || e.ctrlKey) {
-          retryMessage(msg.id, existingInstruction);
-        } else {
-          openRetryModal(msg.id, existingInstruction);
-        }
+        if (inGroup) retryGroupMessage(activeGroupId, msg.id, existingInstruction);
+        else retryMessage(msg.id, existingInstruction);
       });
     }
 

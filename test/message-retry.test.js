@@ -101,31 +101,13 @@ test('successful replacements with error message ids remain in the next prompt',
   assert.deepEqual(Array.from(messages, message => message.content), ['', 'Successful replacement']);
 });
 
-for (const button of ['btn-cancel-retry-modal', 'btn-close-retry-modal']) {
-  test(`cancelling error retry with ${button} leaves the saved message and bubble intact`, () => {
-    const fixture = retryFixture();
-    fixture.retryButton.click();
-    assert.equal(fixture.elements['retry-instruction-modal'].visible, true);
-    assert.equal(fixture.elements['retry-instruction-input'].value, 'Original instruction');
-    fixture.elements[button].click();
-    assert.equal(fixture.elements['retry-instruction-modal'].visible, false);
-    assert.deepEqual(fixture.messages, [fixture.msg]);
-    assert.equal(fixture.bubble.attached, true);
-    assert.deepEqual(fixture.calls, []);
-    fixture.elements['btn-confirm-retry'].click();
-    assert.deepEqual(fixture.calls, []);
-  });
-}
-
-test('confirming error retry uses the message identity and the edited instruction', () => {
+test('error retry button retries immediately without opening the instruction modal', () => {
   const fixture = retryFixture();
   fixture.retryButton.click();
-  fixture.elements['retry-instruction-input'].value = '  New instruction  ';
-  fixture.elements['btn-confirm-retry'].click();
-  assert.deepEqual(fixture.calls, [['err-original', 'New instruction']]);
+  assert.deepEqual(fixture.calls, [['err-original', 'Original instruction']]);
+  assert.equal(fixture.elements['retry-instruction-modal'].visible, false);
   assert.deepEqual(fixture.messages, [fixture.msg]);
   assert.equal(fixture.bubble.attached, true);
-  assert.equal(fixture.elements['retry-instruction-modal'].visible, false);
 });
 
 for (const modifier of ['shiftKey', 'ctrlKey']) {
